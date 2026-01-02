@@ -60,7 +60,6 @@ def print_debug_structure(data, filename="Unknown"):
             print(f"   Item [0] Type: {type(first)}")
             if isinstance(first, dict):
                 print(f"   Item [0] Keys: {list(first.keys())}")
-                # Print a small sample of the first item
                 sample = json.dumps(first, indent=2)[:300] + "..."
                 print(f"   Sample Data:\n{sample}")
     elif isinstance(data, dict):
@@ -86,7 +85,7 @@ def download_file(url, dest_path):
         sys.exit(1)
 
 def build_mini_dataset():
-    # 1. Validate Ratios (RESTORED)
+    # 1. Validate Ratios
     total_ratio = TRAIN_RATIO + VAL_RATIO + TEST_RATIO
     if abs(total_ratio - 1.0) > 0.001:
         print(f"⚠️ Warning: Ratios sum to {total_ratio:.2f}, not 1.0.")
@@ -124,7 +123,7 @@ def build_mini_dataset():
     labels_zip = data_dir / labels_zip_name
     download_file(LABELS_URL, labels_zip)
 
-    # 4. Pick Videos (With Full Defensive Logic)
+    # 4. Pick Videos (Defensive)
     print("🎲 Selecting random videos...")
     import zipfile
     
@@ -143,40 +142,30 @@ def build_mini_dataset():
             content = z_lbl.read(f)
             raw_data = json.loads(content)
             
-            # --- 🛡️ DEFENSIVE PARSING (RESTORED) ---
-            
-            # A. Validate: Must be a List
+            # --- 🛡️ DEFENSIVE PARSING ---
             if not isinstance(raw_data, list):
                 print(f"❌ Error: Expected JSON list in {f}, but got {type(raw_data)}.")
                 print_debug_structure(raw_data, f)
                 continue 
 
-            # B. Validate: Must not be empty
             if len(raw_data) == 0:
                 print(f"⚠️ Warning: JSON list is empty in {f}. Skipping.")
                 continue
 
-            # C. Validate: Items must have required keys
             first_frame = raw_data[0]
             if not isinstance(first_frame, dict):
                  print(f"❌ Error: List items must be dicts in {f}.")
                  print_debug_structure(raw_data, f)
                  continue
 
-            # Check for critical keys
             has_video_name = 'videoName' in first_frame
             has_labels = 'labels' in first_frame or 'objects' in first_frame
-            
-            if not has_video_name:
-                # If missing, warn but try to recover using filename
-                pass 
             
             if not has_labels:
                 print(f"❌ Error: Missing 'labels' or 'objects' key in {f}.")
                 print_debug_structure(raw_data, f)
                 continue
             
-            # --- PARSING ---
             if has_video_name:
                 v_name = first_frame['videoName']
             else:
@@ -281,6 +270,8 @@ def build_mini_dataset():
             print(f"✅ Finished: {count_downloaded} Downloaded, {count_cached} Used Cache.")
             
     except Exception as e:
+        # Check if it was a user interrupt inside the stream logic
+        # (Though RemoteZip usually raises standard errors, keyboard interrupt is handled at main level)
         print(f"❌ Streaming Error: {e}")
         sys.exit(1)
 
@@ -367,4 +358,10 @@ def convert_to_coco(bdd_data_list):
     return coco
 
 if __name__ == "__main__":
-    build_mini_dataset()
+    try:
+        build_mini_dataset()
+    except KeyboardInterrupt:
+        print("\n\n🛑 Execution interrupted by user.")
+        print("   ✅ Partial progress saved in 'data/image_cache'.")
+        print("   🚀 Run the script again to resume downloading.\n")
+        sys.exit(0)

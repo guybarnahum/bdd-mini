@@ -20,3 +20,8 @@ output_dir = "output/mini_bdd"
 # 1 = 30FPS (Too big/redundant)
 # > 5 may be too far off for tracker
 frame_step = 5
+
+# Splits (Must sum to 1.0)
+train_ratio = 0.70
+val_ratio   = 0.15
+test_ratio  = 0.15

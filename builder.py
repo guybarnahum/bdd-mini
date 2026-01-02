@@ -34,12 +34,18 @@ def load_config():
 
 cfg = load_config()
 
+# Load basic settings
 LABELS_URL = cfg['download']['labels_url']
 IMAGES_URL = cfg['download']['images_url']
 NUM_VIDEOS = cfg['dataset']['num_videos']
 SEED = cfg['dataset']['seed']
 OUTPUT_DIR = cfg['dataset']['output_dir']
 FRAME_STEP = cfg['dataset'].get('frame_step', 5)
+
+# Load Ratios (Default to 70/15/15 if missing)
+TRAIN_RATIO = cfg['dataset'].get('train_ratio', 0.70)
+VAL_RATIO   = cfg['dataset'].get('val_ratio', 0.15)
+TEST_RATIO  = cfg['dataset'].get('test_ratio', 0.15)
 
 # --- DEBUG HELPER ---
 def print_debug_structure(data, filename="Unknown"):
@@ -80,29 +86,45 @@ def download_file(url, dest_path):
         sys.exit(1)
 
 def build_mini_dataset():
-    # 1. Setup Directories
+    # 1. Validate Ratios
+    total_ratio = TRAIN_RATIO + VAL_RATIO + TEST_RATIO
+    if abs(total_ratio - 1.0) > 0.001:
+        print(f"⚠️ Warning: Ratios sum to {total_ratio:.2f}, not 1.0.")
+
+    # 2. Setup Directories
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
-    
     out_dir = Path(OUTPUT_DIR)
-    img_out = out_dir / "train"
-    img_out.mkdir(parents=True, exist_ok=True)
+    
+    # Define splits we actually need based on ratios
+    splits_needed = []
+    if TRAIN_RATIO > 0: splits_needed.append("train")
+    if VAL_RATIO > 0:   splits_needed.append("val")
+    if TEST_RATIO > 0:  splits_needed.append("test")
+    
+    # Create split specific image folders
+    img_roots = {}
+    for s in splits_needed:
+        path = out_dir / "images" / s
+        path.mkdir(parents=True, exist_ok=True)
+        img_roots[s] = path
+        
     anno_out = out_dir / "annotations"
     anno_out.mkdir(exist_ok=True)
 
     print(f"⚙️  Builder Config: {NUM_VIDEOS} videos | Step: {FRAME_STEP} | Seed: {SEED}")
+    print(f"📊 Ratios: Train {TRAIN_RATIO:.2f} | Val {VAL_RATIO:.2f} | Test {TEST_RATIO:.2f}")
 
-    # 2. Get Labels
+    # 3. Get Labels
     labels_zip_name = os.path.basename(LABELS_URL)
     labels_zip = data_dir / labels_zip_name
     download_file(LABELS_URL, labels_zip)
 
-    # 3. Pick Videos from Labels
+    # 4. Pick Videos from Labels
     print("🎲 Selecting random videos from labels...")
     import zipfile
     
-    selected_video_names = []
-    mini_annotations = []
+    parsed_videos = [] # Holds valid video objects
     
     with zipfile.ZipFile(labels_zip, 'r') as z_lbl:
         all_json = [f for f in z_lbl.namelist() if f.endswith(".json") and "train" in f]
@@ -117,7 +139,7 @@ def build_mini_dataset():
             content = z_lbl.read(f)
             raw_data = json.loads(content)
             
-            # --- 🛡️ DEFENSIVE PARSING START ---
+            # --- 🛡️ DEFENSIVE PARSING START (PRESERVED) ---
             
             # 1. Validate: Must be a List
             if not isinstance(raw_data, list):
@@ -138,52 +160,69 @@ def build_mini_dataset():
                  continue
 
             # Check for critical keys
-            # We need 'videoName' (or a way to infer it) and 'labels'/'objects'
             has_video_name = 'videoName' in first_frame
             has_labels = 'labels' in first_frame or 'objects' in first_frame
             
             if not has_video_name:
-                # If missing, warn but try to recover using filename
-                # print(f"⚠️ Note: 'videoName' missing in {f}. Will use filename.")
                 pass 
             
             if not has_labels:
-                # This is critical. If no labels, we can't train.
                 print(f"❌ Error: Missing 'labels' or 'objects' key in {f}.")
-                print("   Expected keys: 'labels', 'objects', 'videoName', 'frameIndex'")
                 print_debug_structure(raw_data, f)
                 continue
 
             # --- PARSING ---
-            # Extract Video Name safely
             if has_video_name:
                 v_name = first_frame['videoName']
             else:
                 v_name = os.path.basename(f).replace('.json', '')
             
-            # Wrap in standard structure
             video_entry = {
                 "name": v_name,
                 "frames": raw_data
             }
             
-            mini_annotations.append(video_entry)
-            selected_video_names.append(v_name)
+            parsed_videos.append(video_entry)
             # --- 🛡️ DEFENSIVE PARSING END ---
 
-    print(f"✅ Selected {len(selected_video_names)} valid videos.")
-    if len(selected_video_names) == 0:
+    print(f"✅ Parsed {len(parsed_videos)} valid videos.")
+    if len(parsed_videos) == 0:
         print("❌ No valid videos found! Check the debug output above.")
         sys.exit(1)
 
-    # 4. Stream Images
+    # --- 5. Apply Splits ---
+    random.shuffle(parsed_videos)
+    total = len(parsed_videos)
+    
+    n_train = int(total * TRAIN_RATIO)
+    n_val = int(total * VAL_RATIO)
+    
+    train_set = parsed_videos[:n_train]
+    val_set = parsed_videos[n_train:n_train+n_val]
+    
+    # Leftovers go to test if ratio > 0
+    test_start = n_train + n_val
+    if TEST_RATIO > 0:
+        test_set = parsed_videos[test_start:]
+    else:
+        test_set = []
+
+    # Map video names to splits for the downloader
+    video_to_split_map = {} 
+    for v in train_set: video_to_split_map[v['name']] = "train"
+    for v in val_set:   video_to_split_map[v['name']] = "val"
+    for v in test_set:  video_to_split_map[v['name']] = "test"
+
+    print(f"📊 Final Split: {len(train_set)} Train, {len(val_set)} Val, {len(test_set)} Test")
+
+    # 6. Stream Images
     print(f"☁️  Connecting to Remote Zip... (This may take 10-20s)")
     
     try:
         with RemoteZip(IMAGES_URL) as rz:
             all_files = rz.namelist()
-            needed_videos = set(selected_video_names)
             files_to_extract = []
+            needed_videos = set(video_to_split_map.keys())
             
             for filename in all_files:
                 if not filename.endswith('.jpg'): continue
@@ -191,12 +230,14 @@ def build_mini_dataset():
                 if len(parts) >= 2:
                     v_name = parts[-2]
                     if v_name in needed_videos:
-                        files_to_extract.append(filename)
+                        split = video_to_split_map[v_name]
+                        files_to_extract.append((filename, split))
             
             print(f"⬇️  Streaming frames for {len(needed_videos)} videos...")
             
             count = 0
-            for file_path in tqdm(files_to_extract):
+            for file_info in tqdm(files_to_extract):
+                file_path, split = file_info
                 try:
                     fname = os.path.basename(file_path)
                     # Robust Frame Index Parsing
@@ -204,7 +245,7 @@ def build_mini_dataset():
                     if '-' in frame_part:
                          frame_str = frame_part.split('-')[-1]
                     else:
-                         frame_str = frame_part[-7:] # Fallback
+                         frame_str = frame_part[-7:] 
                     
                     try:
                         frame_idx = int(frame_str) - 1
@@ -214,7 +255,10 @@ def build_mini_dataset():
                     if frame_idx % FRAME_STEP != 0:
                         continue 
                     
-                    target = img_out / fname
+                    # Target folder depends on split
+                    target_folder = img_roots[split]
+                    target = target_folder / fname
+                    
                     if not target.exists():
                         rz.extract(file_path, path=data_dir)
                         full_extracted_path = data_dir / file_path
@@ -232,13 +276,19 @@ def build_mini_dataset():
     if (data_dir / "bdd100k").exists():
         shutil.rmtree(data_dir / "bdd100k")
 
-    # 5. Generate COCO JSON
-    print("📝 Generating COCO JSON...")
-    coco_format = convert_to_coco(mini_annotations)
+    # 7. Generate COCO JSONs per split
+    print("📝 Generating COCO JSONs...")
+    datasets = [("train", train_set), ("val", val_set), ("test", test_set)]
     
-    out_json = anno_out / "train.json"
-    with open(out_json, 'w') as f:
-        json.dump(coco_format, f)
+    for split_name, video_data in datasets:
+        if not video_data: continue
+        
+        print(f"   - Building {split_name}.json...")
+        coco_format = convert_to_coco(video_data)
+        
+        out_json = anno_out / f"{split_name}.json"
+        with open(out_json, 'w') as f:
+            json.dump(coco_format, f)
     
     print(f"🚀 Done! Mini-BDD ready at: {out_dir}")
 

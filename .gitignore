@@ -1,0 +1,24 @@
+# --- Project Data (Important!) ---
+# Ignore the download cache (labels, zips)
+data/
+# Ignore the generated Mini-BDD dataset
+output/
+
+# --- Environment ---
+# Virtual Environment
+venv/
+.env
+
+# --- Python Standard ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.pytest_cache/
+.mypy_cache/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+

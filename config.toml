@@ -1,0 +1,22 @@
+[download]
+# Official ETH Zurich Mirror (Fast & Reliable)
+labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
+
+# The 32GB full dataset (We stream this, so we don't download the whole thing)
+images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
+
+[dataset]
+# Number of videos to sample for the mini dataset
+num_videos = 20
+
+# Random seed for reproducibility
+seed = 42
+
+# Output directory for the generated COCO dataset
+output_dir = "output/mini_bdd"
+
+# Sampling rate (keep every Nth frame). 
+# 5 = ~6FPS (Good for training)
+# 1 = 30FPS (Too big/redundant)
+# > 5 may be too far off for tracker
+frame_step = 5

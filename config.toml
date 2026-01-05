@@ -7,10 +7,10 @@ images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
 
 [dataset]
 # Number of videos to sample for the mini dataset
-num_videos = 20
+num_videos = 10
 
 # Random seed for reproducibility
-seed = 42
+seed = 12
 
 # Output directory for the generated COCO dataset
 output_dir = "output/mini_bdd"
@@ -21,7 +21,12 @@ output_dir = "output/mini_bdd"
 # > 5 may be too far off for tracker
 frame_step = 5
 
+# Supported formats: "coco" (default), "mot"
+export_formats = ["coco", "mot"]
+
 # Splits (Must sum to 1.0)
+# set 0 to skip generating 
 train_ratio = 0.70
 val_ratio   = 0.15
 test_ratio  = 0.15
+

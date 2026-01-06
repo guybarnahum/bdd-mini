@@ -1,72 +1,122 @@
 # 🚗 BDD-Mini: Lightweight Dataset Builder
 
-**BDD-Mini** is a specialized tool designed to create a "Mini-BDD100K" dataset for Multi-Object Tracking (MOT) training. 
+**BDD-Mini** is a specialized tool designed to create a "Mini-BDD100K" dataset for Multi-Object Tracking (MOT) training.
 
-Instead of downloading the massive 32GB+ dataset, this tool **streams** the data from official mirrors, extracting only the specific video sequences and frames you need. It automatically formats the data into the **COCO-Video** JSON structure required by modern trackers like MOTIP.
+Instead of downloading the massive 32GB+ dataset, this tool **streams** the data from official mirrors, extracting only the specific video sequences and frames you need. It automatically formats the data into **COCO-Video** (for Transformers like MOTIP) and **MOTChallenge** (for TrackEval) formats.
 
 ---
 
 ## 🚀 Features
 
-* **Smart Streaming:** Connects to remote zip archives (via HTTP Range Requests) to download *only* the frames you need.
-* **Space Efficient:** Turns a 32GB download into a ~200MB local dataset.
-* **Auto-Formatting:** Converts BDD100K labels directly into COCO-Video format (Train/Val JSONs).
-* **Configurable:** Customize the number of videos, frame sampling rate (FPS), and download mirrors via a simple TOML file.
+* **Smart Streaming:** Connects to remote zip archives via HTTP Range Requests to download *only* the frames you need.
+* **Resume Capability:** Images are cached locally in `data/image_cache`. If you interrupt the script (`Ctrl-C`), simply run it again to resume exactly where you left off.
+* **Multi-Format Export:** Generates both **COCO-Video** JSONs (Train/Val/Test) and **MOTChallenge** (`gt.txt`) formats simultaneously.
+* **Configurable Splits:** Define your own Train/Val/Test ratios in `config.toml` (e.g., 70/15/15).
+* **Visualization Tools:** Includes a renderer to generate MP4 movies with bounding boxes directly from your generated labels (COCO or MOT) using FFmpeg.
+* **Defensive Parsing:** Validates source data integrity to prevent crashes on malformed JSONs.
 
 ---
 
 ## 📂 Project Structure
 
-```text
 bdd-mini/
-├── config.toml         # ⚙️ Configuration (URLs, count, sampling)
-├── setup.sh            # 🛠️ Installation script (creates venv)
-├── builder.py          # 🏗️ Main script (streams & builds dataset)
-├── cleanup.sh          # 🧹 Utility to clean data/output
-├── venv/               # 🐍 Virtual environment (auto-created)
-├── data/               # 📦 Cache for labels & temporary downloads
-└── output/             # 📤 Final Dataset Location
+├── config.toml          # ⚙️ Configuration (URLs, counts, ratios, formats)
+├── setup.sh             # 🛠️ Installation script (creates venv)
+├── builder.py           # 🏗️ Main script (streams, splits & builds dataset)
+├── render.py            # 🎬 Visualization tool (renders MP4s from labels)
+├── cleanup.sh           # 🧹 Safer cleanup (protects image cache)
+├── venv/                # 🐍 Virtual environment
+├── data/                # 📦 Local cache (labels & image_cache)
+└── output/              # 📤 Final Dataset Location
     └── mini_bdd/
-        ├── annotations/
-        │   └── train.json
-        └── train/
-            ├── video1-frame001.jpg
-            └── ...
-```
+        ├── annotations/ # 📄 COCO Format (train.json, val.json)
+        ├── mot_format/  # 📄 MOT Format (gt/gt.txt, seqinfo.ini)
+        └── images/      # 🖼️ Images sorted by split (train/val/test)
+
+---
 
 ## 🛠️ Installation
-Run the Setup Script: This will create a Python virtual environment (venv) and install dependencies (remotezip, tqdm, etc.).
 
-```bash
-chmod +x setup.sh
-./setup.sh
-```
+1.  **Run the Setup Script:**
+    This creates the Python virtual environment and installs dependencies (`remotezip`, `tqdm`, `opencv-python`).
 
-## Verify Configuration: 
+    chmod +x setup.sh
+    ./setup.sh
 
-Check config.toml to ensure the download URLs and settings match your needs.
+2.  **Install FFmpeg (Optional but Recommended):**
+    Required for `render.py` to generate visualization videos.
+    * **Mac:** `brew install ffmpeg`
+    * **Linux:** `sudo apt install ffmpeg`
+
+---
 
 ## 🏃 Usage
 
-1. Build the Dataset
+### 1. Build the Dataset
+Activate the environment and run the builder. It will download labels, select random videos, and stream frames.
 
-To generate your dataset, simply activate the environment and run the builder:
-
-```bash
 source venv/bin/activate
 python3 builder.py
-```
 
-What happens?
+* **Interrupting:** You can hit `Ctrl-C` at any time. Progress is saved in `data/image_cache`. Run the command again to resume instantly.
 
-* Downloads the tracking labels (approx 114MB).
-* Selects N random videos (defined in config).
-* Streams specific frames for those videos from the 32GB remote zip.
-* Generates output/mini_bdd/annotations/train.json.
+### 2. Visualize the Data
+Verify your dataset by rendering a video with bounding boxes drawn from the generated labels.
 
-2. Clean Up
+# Render a random video from the Training set (COCO format)
+python3 render.py
 
-To remove generated datasets or cache without deleting the code:
-```bash 
+# Render from the Validation set
+python3 render.py --split val
+
+# Verify MOTChallenge export format specifically
+python3 render.py --format mot
+
+* **Output:** Videos are saved to `output/rendered/`.
+
+### 3. Clean Up
+To remove generated outputs (e.g., to re-roll random videos) while **keeping the downloaded image cache**:
+
 ./cleanup.sh
-```
+
+*(The script will ask for confirmation before deleting the cache).*
+
+---
+
+## ⚙️ Configuration (`config.toml`)
+
+Control every aspect of the dataset generation here.
+
+[dataset]
+num_videos = 20           # Total videos to select
+seed = 42                 # Random seed for reproducibility
+output_dir = "output/mini_bdd"
+frame_step = 5            # Sample 1 frame every N frames (5 = ~6FPS)
+
+# Export Formats
+# "coco" -> annotations/train.json (for MOTIP/MOTR)
+# "mot"  -> mot_format/train/Video/gt/gt.txt (for TrackEval)
+export_formats = ["coco", "mot"]
+
+# Data Splits (Must sum to 1.0)
+train_ratio = 0.70
+val_ratio   = 0.15
+test_ratio  = 0.15
+
+---
+
+## ❓ Troubleshooting
+
+**"Streaming Error / Connection Reset"**
+The script relies on the ETH Zurich mirror. If unstable, try again later or check your internet connection. The Resume feature ensures you don't lose progress.
+
+**"FFmpeg not found"**
+If `render.py` fails, ensure ffmpeg is installed and in your system PATH.
+
+**"Dataset is empty"**
+Check `config.toml`. If `num_videos` is too high (e.g., >200), the script might struggle to find enough matching sequences in the specific label zip file provided.
+
+---
+
+## 📝 License
+The BDD100K data is subject to the [BDD100K License](https://doc.bdd100k.com/license.html).

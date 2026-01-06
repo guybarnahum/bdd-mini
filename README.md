@@ -18,9 +18,9 @@ Instead of downloading the massive 32GB+ dataset, this tool **streams** the data
 ---
 
 ## 📂 Project Structure
-
+```bash
 bdd-mini/
-├── config.toml          # ⚙️ Configuration (URLs, counts, ratios, formats)
+├── config.toml          
 ├── setup.sh             # 🛠️ Installation script (creates venv)
 ├── builder.py           # 🏗️ Main script (streams, splits & builds dataset)
 ├── render.py            # 🎬 Visualization tool (renders MP4s from labels)
@@ -32,8 +32,7 @@ bdd-mini/
         ├── annotations/ # 📄 COCO Format (train.json, val.json)
         ├── mot_format/  # 📄 MOT Format (gt/gt.txt, seqinfo.ini)
         └── images/      # 🖼️ Images sorted by split (train/val/test)
-
----
+```
 
 ## 🛠️ Installation
 
@@ -48,7 +47,6 @@ bdd-mini/
     * **Mac:** `brew install ffmpeg`
     * **Linux:** `sudo apt install ffmpeg`
 
----
 
 ## 🏃 Usage
 
@@ -63,30 +61,36 @@ python3 builder.py
 ### 2. Visualize the Data
 Verify your dataset by rendering a video with bounding boxes drawn from the generated labels.
 
-# Render a random video from the Training set (COCO format)
+#### Render a random video from the Training set (COCO format)
+```bash
 python3 render.py
-
-# Render from the Validation set
+```
+#### Render from the Validation set
+```bash
 python3 render.py --split val
+```
 
-# Verify MOTChallenge export format specifically
+#### Verify MOTChallenge export format specifically
+```bash
 python3 render.py --format mot
+```
 
-* **Output:** Videos are saved to `output/rendered/`.
+**Output:** Videos are saved to `output/rendered/`.
 
 ### 3. Clean Up
 To remove generated outputs (e.g., to re-roll random videos) while **keeping the downloaded image cache**:
 
+```bash
 ./cleanup.sh
-
+```
 *(The script will ask for confirmation before deleting the cache).*
 
----
 
 ## ⚙️ Configuration (`config.toml`)
 
 Control every aspect of the dataset generation here.
 
+```bash
 [dataset]
 num_videos = 20           # Total videos to select
 seed = 42                 # Random seed for reproducibility
@@ -102,18 +106,17 @@ export_formats = ["coco", "mot"]
 train_ratio = 0.70
 val_ratio   = 0.15
 test_ratio  = 0.15
-
----
+```
 
 ## ❓ Troubleshooting
 
-**"Streaming Error / Connection Reset"**
+* **"Streaming Error / Connection Reset"**
 The script relies on the ETH Zurich mirror. If unstable, try again later or check your internet connection. The Resume feature ensures you don't lose progress.
 
-**"FFmpeg not found"**
+* **"FFmpeg not found"**
 If `render.py` fails, ensure ffmpeg is installed and in your system PATH.
 
-**"Dataset is empty"**
+* **"Dataset is empty"**
 Check `config.toml`. If `num_videos` is too high (e.g., >200), the script might struggle to find enough matching sequences in the specific label zip file provided.
 
 ---

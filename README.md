@@ -4,7 +4,9 @@
 
 Instead of downloading the massive 32GB+ dataset, this tool **streams** the data from official mirrors, extracting only the specific video sequences and frames you need. It automatically formats the data into **COCO-Video** (for Transformers like MOTIP) and **MOTChallenge** (for TrackEval) formats.
 
----
+<p align="center">
+  <img src="./coco.gif" width="100%">
+</p>
 
 ## 🚀 Features
 
@@ -15,7 +17,6 @@ Instead of downloading the massive 32GB+ dataset, this tool **streams** the data
 * **Visualization Tools:** Includes a renderer to generate MP4 movies with bounding boxes directly from your generated labels (COCO or MOT) using FFmpeg.
 * **Defensive Parsing:** Validates source data integrity to prevent crashes on malformed JSONs.
 
----
 
 ## 📂 Project Structure
 ```bash

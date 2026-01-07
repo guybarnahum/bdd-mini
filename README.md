@@ -6,9 +6,7 @@ It supports building **Hybrid Datasets** by mixing ground-level autonomous drivi
 
 Instead of downloading the massive 32GB+ BDD dataset, this tool **streams** BDD data from official mirrors, extracting only the specific video sequences and frames you need. It automatically formats everything (Ground + Drone) into unified **COCO-Video** (for Transformers like MOTIP) and **MOTChallenge** (for TrackEval) formats.
 
-<p align="center">
-  <img src="./coco.gif" width="100%">
-</p>
+https://github.com/user-attachments/assets/cd4d0d37-252e-4b0c-ba77-b6ec1234f0bb
 
 ## 🚀 Features
 

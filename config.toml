@@ -22,7 +22,7 @@ images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
 
 # --- SOURCE: VisDrone (Local Zip) ---
 [visdrone]
-enabled = false  # Set to true after downloading VisDrone zips
+enabled = true  # Set to true after downloading VisDrone zips
 num_videos = 10
 images_zip = "data/VisDrone2019-MOT-train.zip"
 labels_zip = "data/VisDrone2019-MOT-train.zip"

@@ -297,6 +297,14 @@ def build_mini_dataset():
     if vis_cfg.get('enabled', False):
         print("🚁 Processing VisDrone metadata...")
         lbl_zip_path = Path(vis_cfg.get('labels_zip', ''))
+        img_zip_path = Path(vis_cfg.get('images_zip', ''))
+        
+        if not lbl_zip_path.exists() or not img_zip_path.exists():
+            print("\n❌ Error: VisDrone is enabled but zip files are missing!")
+            print(f"   - Missing: {lbl_zip_path if not lbl_zip_path.exists() else ''}")
+            print(f"   - Missing: {img_zip_path if not img_zip_path.exists() else ''}")
+            print("   👉 Please download them to the 'data/' folder or disable [visdrone] in config.")
+            sys.exit(1)
         
         if lbl_zip_path.exists():
             with zipfile.ZipFile(lbl_zip_path, 'r') as z_vis:
@@ -346,8 +354,13 @@ def build_mini_dataset():
                             "zip_path": vis_cfg.get('images_zip')
                         })
 
+    if len(parsed_videos) == 0:
+        print("\n❌ No videos selected! Check that:")
+        print("   1. [bdd] or [visdrone] is enabled in config.toml")
+        print("   2. You have downloaded the required zip files for enabled sources.")
+        sys.exit(1)
+
     print(f"✅ Parsed {len(parsed_videos)} valid videos.")
-    if len(parsed_videos) == 0: sys.exit(1)
 
     # 5. Apply Splits
     random.shuffle(parsed_videos)

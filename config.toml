@@ -1,32 +1,28 @@
-[download]
-# Official ETH Zurich Mirror (Fast & Reliable)
-labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
-
-# The 32GB full dataset (We stream this, so we don't download the whole thing)
-images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
-
 [dataset]
-# Number of videos to sample for the mini dataset
-num_videos = 10
-
-# Random seed for reproducibility
+# Global Settings
 seed = 12
-
-# Output directory for the generated COCO dataset
 output_dir = "output/mini_bdd"
+frame_step = 5            # Keep 1 frame every 5 (approx 6 FPS)
 
-# Sampling rate (keep every Nth frame). 
-# 5 = ~6FPS (Good for training)
-# 1 = 30FPS (Too big/redundant)
-# > 5 may be too far off for tracker
-frame_step = 5
-
-# Supported formats: "coco" (default), "mot"
+# Export Formats: "coco" (MOTIP), "mot" (TrackEval)
 export_formats = ["coco", "mot"]
 
 # Splits (Must sum to 1.0)
-# set 0 to skip generating 
 train_ratio = 0.70
 val_ratio   = 0.15
 test_ratio  = 0.15
 
+# --- SOURCE: BDD100K (Remote Stream) ---
+[bdd]
+enabled = true
+num_videos = 10
+# Moved URLs here since they are specific to BDD
+labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
+images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
+
+# --- SOURCE: VisDrone (Local Zip) ---
+[visdrone]
+enabled = false           # Set to true after downloading VisDrone zips
+num_videos = 10
+images_zip = "data/VisDrone2019-MOT-train.zip"
+labels_zip = "data/VisDrone2019-MOT-train-annotations.zip"

@@ -4,6 +4,7 @@ import random
 import sys
 import shutil
 import configparser
+import zipfile
 from pathlib import Path
 from tqdm import tqdm
 
@@ -36,9 +37,6 @@ def load_config():
 cfg = load_config()
 
 # Load basic settings
-LABELS_URL = cfg['download']['labels_url']
-IMAGES_URL = cfg['download']['images_url']
-NUM_VIDEOS = cfg['dataset']['num_videos']
 SEED = cfg['dataset']['seed']
 OUTPUT_DIR = Path(cfg['dataset']['output_dir'])
 FRAME_STEP = cfg['dataset'].get('frame_step', 5)
@@ -89,7 +87,7 @@ def save_coco_format(split_name, video_data, output_root):
 
     print(f"   - Building {split_name}.json (COCO)...")
     
-    CLASS_MAP = {"pedestrian": 1, "rider": 1, "car": 2, "truck": 2, "bus": 2, "train": 2}
+    CLASS_MAP = {"pedestrian": 1, "rider": 1, "car": 2, "truck": 2, "bus": 2, "train": 2, "vehicle": 2}
     coco = {
         "videos": [], "images": [], "annotations": [],
         "categories": [{"id": 1, "name": "person"}, {"id": 2, "name": "vehicle"}]
@@ -110,7 +108,13 @@ def save_coco_format(split_name, video_data, output_root):
             f_idx = frame_data.get('frameIndex', 0)
             if f_idx % FRAME_STEP != 0: continue
             
-            img_file = f"{video_name}-{f_idx+1:07d}.jpg"
+            # Use auxiliary path if available (VisDrone), else standard BDD naming
+            if 'aux_path' in frame_data:
+                # visdrone/video/0001.jpg -> video-0001.jpg for flat output
+                suffix = os.path.basename(frame_data['aux_path'])
+                img_file = f"{video_name}-{suffix}"
+            else:
+                img_file = f"{video_name}-{f_idx+1:07d}.jpg"
             
             coco["images"].append({
                 "id": global_img_id,
@@ -159,7 +163,7 @@ def save_mot_format(split_name, video_data, output_root):
     if not video_data: return
     print(f"   - Building {split_name}/ (MOTChallenge)...")
     
-    CLASS_MAP = {"pedestrian": 1, "rider": 2, "car": 3, "truck": 4, "bus": 5, "train": 6}
+    CLASS_MAP = {"pedestrian": 1, "rider": 2, "car": 3, "truck": 4, "bus": 5, "train": 6, "vehicle": 3}
     
     for vid_data in video_data:
         v_name = vid_data['name']
@@ -187,7 +191,7 @@ def save_mot_format(split_name, video_data, output_root):
                     
                     # Convert UUID track ID to Integer for MOT format
                     # Simple hash-based approach for local uniqueness
-                    t_id_int = abs(hash(obj['id'])) % 100000 
+                    t_id_int = abs(hash((v_name, obj['id']))) % 100000 
                     
                     if 'box2d' in obj:
                         x1 = obj['box2d']['x1']
@@ -238,46 +242,109 @@ def build_mini_dataset():
         path.mkdir(parents=True, exist_ok=True)
         img_roots[s] = path
     
-    print(f"⚙️  Config: {NUM_VIDEOS} videos | Step: {FRAME_STEP} | Formats: {EXPORT_FORMATS}")
+    print(f"⚙️  Config: Seed {SEED} | Step: {FRAME_STEP} | Formats: {EXPORT_FORMATS}")
 
-    # 3. Get Labels
-    labels_zip_name = os.path.basename(LABELS_URL)
-    labels_zip = data_dir / labels_zip_name
-    download_file(LABELS_URL, labels_zip)
+    # 3. Get Labels (BDD)
+    bdd_cfg = cfg.get('bdd', {})
+    bdd_enabled = bdd_cfg.get('enabled', True)
+    
+    if bdd_enabled:
+        labels_url = bdd_cfg['labels_url']
+        labels_zip_name = os.path.basename(labels_url)
+        labels_zip = data_dir / labels_zip_name
+        download_file(labels_url, labels_zip)
 
     # 4. Pick Videos
     print("🎲 Selecting random videos...")
-    import zipfile
     parsed_videos = []
     
-    with zipfile.ZipFile(labels_zip, 'r') as z_lbl:
-        all_json = [f for f in z_lbl.namelist() if f.endswith(".json") and "train" in f]
-        all_json.sort() # Deterministic Sort
-        
-        random.seed(SEED)
-        if len(all_json) < NUM_VIDEOS:
-            selected_files = all_json
-        else:
-            selected_files = random.sample(all_json, NUM_VIDEOS)
-        
-        for f in selected_files:
-            content = z_lbl.read(f)
-            raw_data = json.loads(content)
+    # --- BDD Source ---
+    if bdd_enabled:
+        with zipfile.ZipFile(labels_zip, 'r') as z_lbl:
+            all_json = [f for f in z_lbl.namelist() if f.endswith(".json") and "train" in f]
+            all_json.sort() # Deterministic Sort
             
-            # Defensive checks
-            if not isinstance(raw_data, list) or len(raw_data) == 0: continue
-            if not isinstance(raw_data[0], dict): continue
+            random.seed(SEED)
+            bdd_num = bdd_cfg.get('num_videos', 10) # Default to 10 if missing
+            if len(all_json) < bdd_num:
+                selected_files = all_json
+            else:
+                selected_files = random.sample(all_json, bdd_num)
             
-            first = raw_data[0]
-            v_name = first.get('videoName', os.path.basename(f).replace('.json', ''))
-            
-            # Check required keys
-            if 'labels' not in first and 'objects' not in first:
-                print(f"❌ Missing labels in {f}")
-                print_debug_structure(raw_data, f)
-                continue
+            for f in selected_files:
+                content = z_lbl.read(f)
+                raw_data = json.loads(content)
+                
+                # Defensive checks
+                if not isinstance(raw_data, list) or len(raw_data) == 0: continue
+                if not isinstance(raw_data[0], dict): continue
+                
+                first = raw_data[0]
+                v_name = first.get('videoName', os.path.basename(f).replace('.json', ''))
+                
+                if 'labels' not in first and 'objects' not in first:
+                    print(f"❌ Missing labels in {f}")
+                    continue
 
-            parsed_videos.append({"name": v_name, "frames": raw_data})
+                parsed_videos.append({
+                    "name": v_name, 
+                    "frames": raw_data, 
+                    "source_type": "bdd"
+                })
+
+    # --- VisDrone Source ---
+    vis_cfg = cfg.get('visdrone', {})
+    if vis_cfg.get('enabled', False):
+        print("🚁 Processing VisDrone metadata...")
+        lbl_zip_path = Path(vis_cfg.get('labels_zip', ''))
+        
+        if lbl_zip_path.exists():
+            with zipfile.ZipFile(lbl_zip_path, 'r') as z_vis:
+                txt_files = sorted([f for f in z_vis.namelist() if f.endswith(".txt") and "__MACOSX" not in f])
+                random.seed(SEED)
+                vis_num = vis_cfg.get('num_videos', 10)
+                selected_vis = random.sample(txt_files, min(len(txt_files), vis_num))
+                
+                CAT_MAP = {1:"pedestrian", 2:"pedestrian", 4:"car", 5:"car", 6:"car", 9:"car"}
+                
+                for f in selected_vis:
+                    lines = z_vis.read(f).decode('utf-8').strip().split('\n')
+                    seq_name = Path(f).stem
+                    
+                    frame_dict = {}
+                    for line in lines:
+                        p = line.split(',')
+                        if len(p)<8: continue
+                        cat_id = int(p[7])
+                        if cat_id not in CAT_MAP: continue
+                        
+                        f_idx = int(p[0])
+                        obj = {
+                            "category": CAT_MAP[cat_id],
+                            "id": int(p[1]),
+                            "box2d": {"x1":int(p[2]), "y1":int(p[3]), "x2":int(p[2])+int(p[4]), "y2":int(p[3])+int(p[5])}
+                        }
+                        if f_idx not in frame_dict: frame_dict[f_idx] = []
+                        frame_dict[f_idx].append(obj)
+                    
+                    # Convert to BDD format
+                    vis_frames = []
+                    if frame_dict:
+                        max_frame = max(frame_dict.keys())
+                        for i in range(1, max_frame+1):
+                            vis_frames.append({
+                                "frameIndex": i-1,
+                                "videoName": seq_name,
+                                "labels": frame_dict.get(i, []),
+                                "aux_path": f"{seq_name}/{i:07d}.jpg"
+                            })
+                        
+                        parsed_videos.append({
+                            "name": seq_name,
+                            "frames": vis_frames,
+                            "source_type": "visdrone",
+                            "zip_path": vis_cfg.get('images_zip')
+                        })
 
     print(f"✅ Parsed {len(parsed_videos)} valid videos.")
     if len(parsed_videos) == 0: sys.exit(1)
@@ -296,61 +363,108 @@ def build_mini_dataset():
     for v in train_set: video_to_split[v['name']] = "train"
     for v in val_set:   video_to_split[v['name']] = "val"
     for v in test_set:  video_to_split[v['name']] = "test"
+    
+    # Also map video -> source info for streaming
+    video_source_map = {v['name']: v for v in parsed_videos}
 
     print(f"📊 Final Split: {len(train_set)} Train, {len(val_set)} Val, {len(test_set)} Test")
 
     # 6. Stream Images
     print(f"☁️  Checking Cache & Streaming Frames...")
-    try:
-        with RemoteZip(IMAGES_URL) as rz:
-            all_files = rz.namelist()
-            files_to_process = []
-            needed_videos = set(video_to_split.keys())
-            
-            for filename in all_files:
-                if not filename.endswith('.jpg'): continue
-                parts = filename.split('/')
-                if len(parts) >= 2 and parts[-2] in needed_videos:
-                    files_to_process.append((filename, video_to_split[parts[-2]]))
-            
-            dl_count, cache_count = 0, 0
-            
-            for file_info in tqdm(files_to_process):
-                file_path, split = file_info
-                try:
-                    fname = os.path.basename(file_path)
+    
+    # Define Download Sources
+    download_queue = []
+    
+    # BDD Source
+    if bdd_enabled:
+        download_queue.append({
+            "type": "bdd", 
+            "opener": RemoteZip, 
+            "path": bdd_cfg['images_url']
+        })
+        
+    # VisDrone Source
+    if vis_cfg.get('enabled', False):
+        download_queue.append({
+            "type": "visdrone", 
+            "opener": zipfile.ZipFile, 
+            "path": vis_cfg.get('images_zip')
+        })
+
+    dl_count, cache_count = 0, 0
+
+    for source in download_queue:
+        try:
+            # Check if source file exists for local zips
+            if source['type'] == 'visdrone' and not Path(source['path']).exists():
+                print(f"⚠️  Skipping VisDrone images: {source['path']} not found")
+                continue
+
+            with source['opener'](source['path']) as z:
+                all_files = z.namelist()
+                files_to_process = []
+                
+                # Filter files for this source
+                for filename in all_files:
+                    if not filename.endswith('.jpg'): continue
                     
-                    # Frame Index Logic
-                    frame_part = fname.replace('.jpg', '')
-                    if '-' in frame_part: frame_str = frame_part.split('-')[-1]
-                    else: frame_str = frame_part[-7:]
-                    try: frame_idx = int(frame_str) - 1
-                    except: frame_idx = 0
-                    
-                    if frame_idx % FRAME_STEP != 0: continue 
+                    parts = filename.split('/')
+                    # BDD: .../video/frame.jpg, VisDrone: .../video/frame.jpg
+                    if len(parts) >= 2:
+                        v_name = parts[-2]
+                        
+                        # Check if this video is needed AND belongs to this source
+                        if v_name in video_to_split:
+                            v_info = video_source_map[v_name]
+                            if v_info['source_type'] == source['type']:
+                                files_to_process.append((filename, video_to_split[v_name], v_name))
+                
+                if not files_to_process: continue
+                
+                # Process files
+                for file_path, split, v_name in tqdm(files_to_process, desc=f"Extracting {source['type']}"):
+                    try:
+                        fname = os.path.basename(file_path)
+                        
+                        # Robust Frame Index Logic
+                        if '-' in fname: frame_str = fname.replace('.jpg', '').split('-')[-1]
+                        else: frame_str = fname.replace('.jpg', '') # VisDrone usually just number
+                        
+                        try: frame_idx = int(frame_str) - 1
+                        except: frame_idx = 0
+                        
+                        if frame_idx % FRAME_STEP != 0: continue 
 
-                    # Cache & Copy Logic
-                    cached_file = cache_dir / fname
-                    if not cached_file.exists():
-                        rz.extract(file_path, path=data_dir)
-                        shutil.move(str(data_dir / file_path), str(cached_file))
-                        dl_count += 1
-                    else:
-                        cache_count += 1
-                    
-                    target = img_roots[split] / fname
-                    if not target.exists():
-                        shutil.copy2(str(cached_file), str(target))
+                        # Cache Logic (Prefix with source to avoid collisions)
+                        cache_fname = f"{source['type']}_{v_name}_{fname}"
+                        cached_file = cache_dir / cache_fname
+                        
+                        if not cached_file.exists():
+                            z.extract(file_path, path=data_dir)
+                            extracted_path = data_dir / file_path
+                            shutil.move(str(extracted_path), str(cached_file))
+                            dl_count += 1
+                        else:
+                            cache_count += 1
+                        
+                        # Copy to Split Output
+                        # Flatten name: video-frame.jpg
+                        out_name = f"{v_name}-{fname}"
+                        target = img_roots[split] / out_name
+                        if not target.exists():
+                            shutil.copy2(str(cached_file), str(target))
 
-                except Exception as e: pass
+                    except Exception as e: pass
             
-            print(f"✅ Images: {dl_count} Downloaded, {cache_count} Cached.")
+            # Cleanup temp extract folder for this source
+            if source['type'] == 'bdd' and (data_dir / "bdd100k").exists():
+                shutil.rmtree(data_dir / "bdd100k")
+                
+        except Exception as e:
+            print(f"❌ Error streaming from {source['type']}: {e}")
+            if source['type'] == 'bdd': sys.exit(1)
 
-    except Exception as e:
-        print(f"❌ Streaming Error: {e}")
-        sys.exit(1)
-
-    if (data_dir / "bdd100k").exists(): shutil.rmtree(data_dir / "bdd100k")
+    print(f"✅ Images: {dl_count} Downloaded, {cache_count} Cached.")
 
     # 7. Generate Output Formats
     print("📝 Generating Outputs...")

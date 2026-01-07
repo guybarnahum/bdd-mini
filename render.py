@@ -85,7 +85,8 @@ def load_from_mot(split, output_dir):
                 frame_data[f_idx].append((bbox[0], bbox[1], bbox[2], bbox[3], tid))
                 
         # 2. Match with Images (Sorted by filename)
-        all_files = sorted([f.name for f in img_root.glob(f"{vid_name}*.jpg")])
+        # FIX: Added hyphen to ensure we don't match substrings (e.g. video1 vs video10)
+        all_files = sorted([f.name for f in img_root.glob(f"{vid_name}-*.jpg")])
         
         frames_list = []
         for i, fname in enumerate(all_files):

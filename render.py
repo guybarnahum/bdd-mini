@@ -147,6 +147,11 @@ def render_video(fmt, split, data_dir, specific_video=None):
     sample = cv2.imread(str(first_path))
     h, w = sample.shape[:2]
     
+    # --- FIX: Ensure dimensions are even for libx264 ---
+    if w % 2 != 0: w -= 1
+    if h % 2 != 0: h -= 1
+    # --------------------------------------------------
+    
     # Save as: output/rendered/VideoName_format.mp4
     out_file = movie_out_dir / f"{target_vid}_{fmt}.mp4"
     
@@ -167,11 +172,17 @@ def render_video(fmt, split, data_dir, specific_video=None):
 
     print(f"🎬 Rendering {len(frames)} frames to {out_file}...")
     try:
-        proc = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        # Changed stderr to None to expose FFmpeg errors if they happen
+        proc = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=None)
         
         for i, frame_info in enumerate(frames):
             img = cv2.imread(str(img_root / frame_info['file_name']))
             if img is None: continue
+            
+            # --- FIX: Resize image if it doesn't match the forced even dimensions ---
+            if img.shape[1] != w or img.shape[0] != h:
+                img = cv2.resize(img, (w, h))
+            # ----------------------------------------------------------------------
             
             # Draw Boxes
             for x, y, bw, bh, tid in frame_info['anns']:

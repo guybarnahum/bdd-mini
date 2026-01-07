@@ -75,6 +75,35 @@ def download_file(url, dest_path):
         print(f"❌ Download failed: {e}")
         sys.exit(1)
 
+def save_manifest(splits, output_root):
+    """Generates a simple text manifest of all processed videos."""
+    manifest_path = output_root / "manifest.txt"
+    
+    print(f"📝 Saving manifest to {manifest_path}...")
+    
+    with open(manifest_path, 'w') as f:
+        f.write(f"BDD-Mini Build Manifest\n")
+        f.write(f"=======================\n\n")
+        
+        for split_name, video_list in splits.items():
+            if not video_list: continue
+            
+            f.write(f"[{split_name.upper()}] - {len(video_list)} videos\n")
+            f.write("-" * 40 + "\n")
+            
+            # Sort for readability
+            sorted_videos = sorted(video_list, key=lambda x: x['name'])
+            
+            for v in sorted_videos:
+                # Format: Source | Video Name | Frame Count
+                source = v.get('source_type', 'unknown').ljust(10)
+                name = v['name'].ljust(30)
+                frame_count = len(v.get('frames', []))
+                
+                f.write(f"{source} | {name} | {frame_count} frames\n")
+            
+            f.write("\n")
+
 # --- EXPORTERS ---
 
 def save_coco_format(split_name, video_data, output_root):
@@ -493,6 +522,10 @@ def build_mini_dataset():
         # Optional MOT Challenge Format
         if "mot" in EXPORT_FORMATS:
             save_mot_format(split, data, out_dir)
+    
+    # Save the human-readable manifest
+    splits_dict = {"train": train_set, "val": val_set, "test": test_set}
+    save_manifest(splits_dict, out_dir)
 
     print(f"🚀 Done! Mini-BDD ready at: {out_dir}")
 

@@ -2,7 +2,6 @@
 set -e
 
 # setup.sh: Sets up the bdd-mini project environment.
-# Creates a venv and installs dependencies.
 
 # ------------- Variables -------------
 VENV_DIR="venv"
@@ -22,11 +21,28 @@ PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.v
 echo "✅ Found Python $PYTHON_VERSION"
 
 # --- Step 2: Create Virtual Environment ---
-if [[ -d "$VENV_DIR" ]]; then
-  echo "ℹ️  Virtual environment '$VENV_DIR' already exists."
+# Check if venv dir exists AND if activate script exists
+if [[ -d "$VENV_DIR" ]] && [[ -f "$VENV_DIR/bin/activate" ]]; then
+  echo "ℹ️  Virtual environment '$VENV_DIR' already exists and looks valid."
 else
+  if [[ -d "$VENV_DIR" ]]; then
+    echo "⚠️  Found broken or incomplete '$VENV_DIR'. Recreating..."
+    rm -rf "$VENV_DIR"
+  fi
+  
   echo "📦 Creating virtual environment in '$VENV_DIR'..."
-  python3 -m venv "$VENV_DIR"
+  
+  # Try to create venv. If it fails, print the ubuntu fix hint.
+  if ! python3 -m venv "$VENV_DIR"; then
+    echo ""
+    echo "❌ Failed to create virtual environment."
+    echo "👉 On Ubuntu/EC2, you likely need to run:"
+    echo "   sudo apt install python3-venv"
+    echo ""
+    # Clean up the broken folder so we don't loop next time
+    rm -rf "$VENV_DIR"
+    exit 1
+  fi
   echo "✅ Created venv."
 fi
 
@@ -40,7 +56,7 @@ source "$VENV_DIR/bin/activate"
 pip install --upgrade pip > /dev/null
 pip install requests tqdm remotezip tomli opencv-python
 
-echo "✅ Dependencies installed: requests, tqdm, remotezip, tomli"
+echo "✅ Dependencies installed."
 
 # --- Step 4: Verify Config Exists ---
 if [[ ! -f "$CONFIG_FILE" ]]; then

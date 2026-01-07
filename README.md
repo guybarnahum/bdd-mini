@@ -12,12 +12,13 @@ Instead of downloading the massive 32GB+ BDD dataset, this tool **streams** BDD 
 
 ## 🚀 Features
 
-* **Smart Streaming:** Connects to remote zip archives via HTTP Range Requests to download *only* the frames you need.
+* **Hybrid Source Support:** Mix and match data from **BDD100K** (streaming) and **VisDrone** (local zip).
+* **Smart Streaming (BDD):** Connects to remote zip archives via HTTP Range Requests to download *only* the frames you need.
 * **Resume Capability:** Images are cached locally in `data/image_cache`. If you interrupt the script (`Ctrl-C`), simply run it again to resume exactly where you left off.
 * **Multi-Format Export:** Generates both **COCO-Video** JSONs (Train/Val/Test) and **MOTChallenge** (`gt.txt`) formats simultaneously.
 * **Configurable Splits:** Define your own Train/Val/Test ratios in `config.toml` (e.g., 70/15/15).
-* **Visualization Tools:** Includes a renderer to generate MP4 movies with bounding boxes directly from your generated labels (COCO or MOT) using FFmpeg.
-* **Defensive Parsing:** Validates source data integrity to prevent crashes on malformed JSONs.
+* **Visualization Tools:** Includes a renderer to generate MP4 movies with bounding boxes directly from your generated labels (COCO or MOT) using FFmpeg. Handles drone footage resolutions automatically.
+* **Manifest Generation:** Creates a human-readable `manifest.txt` listing exactly which videos ended up in which split.
 
 
 ## 📂 Project Structure
@@ -29,12 +30,13 @@ bdd-mini/
 ├── render.py            # 🎬 Visualization tool (renders MP4s from labels)
 ├── cleanup.sh           # 🧹 Safer cleanup (protects image cache)
 ├── venv/                # 🐍 Virtual environment
-├── data/                # 📦 Local cache (labels & image_cache)
+├── data/                # 📦 Local cache (labels, image_cache & VisDrone zips)
 └── output/              # 📤 Final Dataset Location
     └── mini_bdd/
         ├── annotations/ # 📄 COCO Format (train.json, val.json)
         ├── mot_format/  # 📄 MOT Format (gt/gt.txt, seqinfo.ini)
-        └── images/      # 🖼️ Images sorted by split (train/val/test)
+        ├── images/      # 🖼️ Images sorted by split (train/val/test)
+        └── manifest.txt # 📋 List of all processed videos
 ```
 
 ## 🛠️ Installation
@@ -42,8 +44,10 @@ bdd-mini/
 1.  **Run the Setup Script:**
     This creates the Python virtual environment and installs dependencies (`remotezip`, `tqdm`, `opencv-python`).
 
+    ```bash
     chmod +x setup.sh
     ./setup.sh
+    ```
 
 2.  **Install FFmpeg (Optional but Recommended):**
     Required for `render.py` to generate visualization videos.
@@ -53,25 +57,39 @@ bdd-mini/
 
 ## 🏃 Usage
 
-### 1. Build the Dataset
-Activate the environment and run the builder. It will download labels, select random videos, and stream frames.
+### 1. Configure Sources (`config.toml`)
+Enable or disable sources and set how many videos you want from each.
 
+* **BDD100K:** Enabled by default (Streaming).
+* **VisDrone:** Disabled by default (Requires manual download).
 
+### 2. Prepare VisDrone Data (Optional)
+If you enabled `[visdrone]`, you must download the training data manually because it cannot be streamed reliably.
+1. Download **`VisDrone2019-MOT-train.zip`** (Images + Annotations).
+2. Place it in the `data/` folder.
+3. Update `config.toml` to point `images_zip` and `labels_zip` to this file.
+
+### 3. Build the Dataset
+Activate the environment and run the builder. It will download labels, select random videos (mixing BDD + VisDrone), and stream/extract frames.
+
+```bash
 source venv/bin/activate
 python3 builder.py
+```
 
 * **Interrupting:** You can hit `Ctrl-C` at any time. Progress is saved in `data/image_cache`. Run the command again to resume instantly.
 
-### 2. Visualize the Data
+### 4. Visualize the Data
 Verify your dataset by rendering a video with bounding boxes drawn from the generated labels.
 
-#### Render a random video from the Training set (COCO format)
+#### Render a random video from the Training set
 ```bash
 python3 render.py
 ```
-#### Render from the Validation set
+
+#### Render a specific video (Check `manifest.txt` for names)
 ```bash
-python3 render.py --split val
+python3 render.py --video uav0000086_00000_v
 ```
 
 #### Verify MOTChallenge export format specifically
@@ -81,7 +99,7 @@ python3 render.py --format mot
 
 **Output:** Videos are saved to `output/rendered/`.
 
-### 3. Clean Up
+### 5. Clean Up
 To remove generated outputs (e.g., to re-roll random videos) while **keeping the downloaded image cache**:
 
 ```bash
@@ -94,9 +112,8 @@ To remove generated outputs (e.g., to re-roll random videos) while **keeping the
 
 Control every aspect of the dataset generation here.
 
-```bash
+```toml
 [dataset]
-num_videos = 20           # Total videos to select
 seed = 42                 # Random seed for reproducibility
 output_dir = "output/mini_bdd"
 frame_step = 5            # Sample 1 frame every N frames (5 = ~6FPS)
@@ -110,17 +127,31 @@ export_formats = ["coco", "mot"]
 train_ratio = 0.70
 val_ratio   = 0.15
 test_ratio  = 0.15
+
+[bdd]
+enabled = true
+num_videos = 10
+labels_url = "[https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip](https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip)"
+images_url = "[https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip](https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip)"
+
+[visdrone]
+enabled = false           # Set to true after downloading zips
+num_videos = 10
+images_zip = "data/VisDrone_Data.zip"
+labels_zip = "data/VisDrone_Data.zip"
 ```
 
 ## ❓ Troubleshooting
 
-* **"Streaming Error / Connection Reset"**
-The script relies on the ETH Zurich mirror. If unstable, try again later or check your internet connection. The Resume feature ensures you don't lose progress.
+* **"VisDrone zip files are missing!"**
+You enabled `[visdrone]` but didn't installed the zip files in `data/`. See step 2 of Usage.
 
 * **"FFmpeg not found"**
 If `render.py` fails, ensure ffmpeg is installed and in your system PATH.
 
+* **"Broken pipe" / FFmpeg Error**
 VisDrone videos often have odd resolutions (e.g., 1365px width). The included `render.py` attempts to automatically fixes this by resizing frames to even dimensions before rendering.
+
 * **"Dataset is empty"**
 Check `config.toml`. If `num_videos` is too high (e.g., >200), the script might struggle to find enough matching sequences in the specific label zip file provided.
 

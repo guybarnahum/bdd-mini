@@ -527,6 +527,12 @@ def build_mini_dataset():
     splits_dict = {"train": train_set, "val": val_set, "test": test_set}
     save_manifest(splits_dict, out_dir)
 
+    #Dump manifest to console
+    print("-" * 20 + " Manifest " + "-" * 20)
+    with open(out_dir / "manifest.txt", "r") as f:
+        print(f.read())
+    print("-" * 50)
+    
     print(f"🚀 Done! Mini-BDD ready at: {out_dir}")
 
 if __name__ == "__main__":

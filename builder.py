@@ -489,9 +489,14 @@ def build_mini_dataset():
                         else:
                             cache_count += 1
                         
-                        # Copy to Split Output
-                        # Flatten name: video-frame.jpg
-                        out_name = f"{v_name}-{fname}"
+                        # --- FIX: Filename flattening logic ---
+                        # If the filename already contains the video name (BDD), don't prepend it again.
+                        if fname.startswith(v_name):
+                            out_name = fname
+                        else:
+                            out_name = f"{v_name}-{fname}"
+                        # -------------------------------------
+                        
                         target = img_roots[split] / out_name
                         if not target.exists():
                             shutil.copy2(str(cached_file), str(target))
@@ -526,13 +531,13 @@ def build_mini_dataset():
     # Save the human-readable manifest
     splits_dict = {"train": train_set, "val": val_set, "test": test_set}
     save_manifest(splits_dict, out_dir)
-
-    #Dump manifest to console
+    
+    # Dump manifest to console
     print("-" * 20 + " Manifest " + "-" * 20)
     with open(out_dir / "manifest.txt", "r") as f:
         print(f.read())
     print("-" * 50)
-    
+
     print(f"🚀 Done! Mini-BDD ready at: {out_dir}")
 
 if __name__ == "__main__":

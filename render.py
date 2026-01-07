@@ -209,7 +209,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--format", choices=["coco", "mot"], default="coco", help="Source format to visualize")
     parser.add_argument("--split", default="train", help="Which split (train/val/test)")
-    parser.add_argument("--dir", default="output/mini_bdd", help="Path to your dataset root")
+    parser.add_argument("--dir", default="output/dataset", help="Path to your dataset root")
     parser.add_argument("--video", default=None, help="Name of specific video to render")
     args = parser.parse_args()
     

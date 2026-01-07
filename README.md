@@ -32,7 +32,7 @@ bdd-mini/
 ├── venv/                # 🐍 Virtual environment
 ├── data/                # 📦 Local cache (labels, image_cache & VisDrone zips)
 └── output/              # 📤 Final Dataset Location
-    └── mini_bdd/
+    └── dataset/
         ├── annotations/ # 📄 COCO Format (train.json, val.json)
         ├── mot_format/  # 📄 MOT Format (gt/gt.txt, seqinfo.ini)
         ├── images/      # 🖼️ Images sorted by split (train/val/test)
@@ -115,7 +115,7 @@ Control every aspect of the dataset generation here.
 ```toml
 [dataset]
 seed = 42                 # Random seed for reproducibility
-output_dir = "output/mini_bdd"
+output_dir = "output/dataset"
 frame_step = 5            # Sample 1 frame every N frames (5 = ~6FPS)
 
 # Export Formats

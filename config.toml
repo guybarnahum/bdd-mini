@@ -1,7 +1,7 @@
 [dataset]
 # Global Settings
 seed = 12
-output_dir = "output/mini_bdd"
+output_dir = "output/dataset"
 frame_step = 5            # Keep 1 frame every 5 (approx 6 FPS)
 
 # Export Formats: "coco" (MOTIP), "mot" (TrackEval)

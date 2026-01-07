@@ -129,8 +129,8 @@ test_ratio  = 0.15
 [bdd]
 enabled = true
 num_videos = 10
-labels_url = "[https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip](https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip)"
-images_url = "[https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip](https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip)"
+labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
+images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
 
 [visdrone]
 enabled = true           # Set to true after downloading zips

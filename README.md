@@ -1,8 +1,10 @@
 # 🚗 BDD-Mini: Lightweight Dataset Builder
 
-**BDD-Mini** is a specialized tool designed to create a "Mini-BDD100K" dataset for Multi-Object Tracking (MOT) training.
+**BDD-Mini** is a specialized tool designed to create a "Mini-Dataset" for Multi-Object Tracking (MOT) training.
 
-Instead of downloading the massive 32GB+ dataset, this tool **streams** the data from official mirrors, extracting only the specific video sequences and frames you need. It automatically formats the data into **COCO-Video** (for Transformers like MOTIP) and **MOTChallenge** (for TrackEval) formats.
+It supports building **Hybrid Datasets** by mixing ground-level autonomous driving footage (**BDD100K**) with aerial drone footage (**VisDrone**).
+
+Instead of downloading the massive 32GB+ BDD dataset, this tool **streams** BDD data from official mirrors, extracting only the specific video sequences and frames you need. It automatically formats everything (Ground + Drone) into unified **COCO-Video** (for Transformers like MOTIP) and **MOTChallenge** (for TrackEval) formats.
 
 <p align="center">
   <img src="./coco.gif" width="100%">
@@ -53,6 +55,7 @@ bdd-mini/
 
 ### 1. Build the Dataset
 Activate the environment and run the builder. It will download labels, select random videos, and stream frames.
+
 
 source venv/bin/activate
 python3 builder.py
@@ -117,10 +120,15 @@ The script relies on the ETH Zurich mirror. If unstable, try again later or chec
 * **"FFmpeg not found"**
 If `render.py` fails, ensure ffmpeg is installed and in your system PATH.
 
+VisDrone videos often have odd resolutions (e.g., 1365px width). The included `render.py` attempts to automatically fixes this by resizing frames to even dimensions before rendering.
 * **"Dataset is empty"**
 Check `config.toml`. If `num_videos` is too high (e.g., >200), the script might struggle to find enough matching sequences in the specific label zip file provided.
+
+* **"Streaming Error / Connection Reset"**
+The script relies on the ETH Zurich mirror for BDD data. If unstable, try again later or check your internet connection. The Resume feature ensures you don't lose progress.
 
 ---
 
 ## 📝 License
-The BDD100K data is subject to the [BDD100K License](https://doc.bdd100k.com/license.html).
+* **BDD100K:** Subject to the [BDD100K License](https://doc.bdd100k.com/license.html).
+* **VisDrone:** Subject to the [VisDrone Dataset License](http://aiskyeye.com/).

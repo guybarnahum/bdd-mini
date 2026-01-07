@@ -59,7 +59,7 @@ bdd-mini/
 Enable or disable sources and set how many videos you want from each.
 
 * **BDD100K:** Enabled by default (Streaming).
-* **VisDrone:** Disabled by default (Requires manual download).
+* **VisDrone:** Enabled by default (Requires manual download).
 
 ### 2. Prepare VisDrone Data (Optional)
 If you enabled `[visdrone]`, you must download the training data manually because it cannot be streamed reliably.
@@ -133,7 +133,7 @@ labels_url = "[https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip]
 images_url = "[https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip](https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip)"
 
 [visdrone]
-enabled = false           # Set to true after downloading zips
+enabled = true           # Set to true after downloading zips
 num_videos = 10
 images_zip = "data/VisDrone_Data.zip"
 labels_zip = "data/VisDrone_Data.zip"

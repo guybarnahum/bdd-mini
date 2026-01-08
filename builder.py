@@ -36,6 +36,37 @@ def load_config():
 
 cfg = load_config()
 
+# --- GLOBAL CLASS MAPPINGS ---
+
+# 1. Output Mapping (String -> MOTIP ID)
+# Used by both COCO and MOT exporters
+UNIFIED_CLASS_MAP = {
+    "pedestrian": 1, 
+    "rider": 1, 
+    "car": 2, 
+    "truck": 2, 
+    "bus": 2, 
+    "train": 2, 
+    "vehicle": 2
+}
+
+# 2. Output Categories Definition (for COCO JSON)
+COCO_CATEGORIES = [
+    {"id": 1, "name": "person"}, 
+    {"id": 2, "name": "vehicle"}
+]
+
+# 3. VisDrone Raw ID -> String Label
+# Used during VisDrone parsing
+VISDRONE_RAW_MAP = {
+    1: "pedestrian", # Pedestrian
+    2: "pedestrian", # People
+    4: "car",        # Car
+    5: "car",        # Van
+    6: "car",        # Truck
+    9: "car"         # Bus
+}
+
 # Load basic settings
 SEED = cfg['dataset']['seed']
 OUTPUT_DIR = Path(cfg['dataset']['output_dir'])
@@ -116,10 +147,10 @@ def save_coco_format(split_name, video_data, output_root):
 
     print(f"   - Building {split_name}.json (COCO)...")
     
-    CLASS_MAP = {"pedestrian": 1, "rider": 1, "car": 2, "truck": 2, "bus": 2, "train": 2, "vehicle": 2}
+    CLASS_MAP = UNIFIED_CLASS_MAP
     coco = {
         "videos": [], "images": [], "annotations": [],
-        "categories": [{"id": 1, "name": "person"}, {"id": 2, "name": "vehicle"}]
+        "categories": COCO_CATEGORIES
     }
     
     global_img_id = 1
@@ -192,7 +223,7 @@ def save_mot_format(split_name, video_data, output_root):
     if not video_data: return
     print(f"   - Building {split_name}/ (MOTChallenge)...")
     
-    CLASS_MAP = {"pedestrian": 1, "rider": 2, "car": 3, "truck": 4, "bus": 5, "train": 6, "vehicle": 3}
+    CLASS_MAP = UNIFIED_CLASS_MAP
     
     for vid_data in video_data:
         v_name = vid_data['name']
@@ -342,7 +373,7 @@ def build_mini_dataset():
                 vis_num = vis_cfg.get('num_videos', 10)
                 selected_vis = random.sample(txt_files, min(len(txt_files), vis_num))
                 
-                CAT_MAP = {1:"pedestrian", 2:"pedestrian", 4:"car", 5:"car", 6:"car", 9:"car"}
+                CAT_MAP = VISDRONE_RAW_MAP
                 
                 for f in selected_vis:
                     lines = z_vis.read(f).decode('utf-8').strip().split('\n')

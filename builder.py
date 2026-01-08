@@ -3,7 +3,6 @@ import json
 import random
 import sys
 import shutil
-import configparser
 import zipfile
 from pathlib import Path
 from tqdm import tqdm

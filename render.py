@@ -1,6 +1,5 @@
 import json
 import cv2
-import os
 import random
 import subprocess
 import argparse

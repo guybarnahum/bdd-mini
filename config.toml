@@ -17,26 +17,49 @@ test_ratio  = 0.15
 enabled = true
 num_videos = 10
 
-# Point to local zips we downloaded
-labels_url = "data/box_track_labels_trainval.zip"
+# Remote access from s3 mirror without download (via RemoteZip opener)
 images_url = [
-    "data/images20-track-train-1.zip",
-    "data/images20-track-train-2.zip",
-    "data/images20-track-train-3.zip",
-    "data/images20-track-train-4.zip",
-    "data/images20-track-train-5.zip",
-    "data/images20-track-train-6.zip",
-    "data/images20-track-train-7.zip",
-    "data/images20-track-val-1.zip"
+    "s3://bdd-mini-data/images20-track-train-1.zip",
+    "s3://bdd-mini-data/images20-track-train-2.zip",
+    "s3://bdd-mini-data/images20-track-train-3.zip",
+    "s3://bdd-mini-data/images20-track-train-4.zip",
+    "s3://bdd-mini-data/images20-track-train-5.zip",
+    "s3://bdd-mini-data/images20-track-train-6.zip",
+    "s3://bdd-mini-data/images20-track-train-7.zip",
+    "s3://bdd-mini-data/images20-track-val-1.zip"
 ]
+labels_url = "s3://bdd-mini-data/box_track_labels_trainval.zip"
 
-# # Remote access without download (via RemoteZip opener)
+# # Remote access from zurich mirror without download (via RemoteZip opener)
 # labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
 # images_url = [ "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip" ]
 
+# # Local access to zips downloaded from http://bdd-data.berkeley.edu/download.html
+# # Very large files each around 4GB, works well on ec2 :
+# # cd data
+# # wget http://128.32.162.150/bdd100k/mot20/images20-track-train-1.zip
+# # Connecting to 128.32.162.150:80... connected.
+# # HTTP request sent, awaiting response... 200 OK
+# # Length: 5172007826 (4.8G) [application/zip]
+# # Saving to: ‘images20-track-train-1.zip’ 
+# # images20-track-train-1.zip   100%[==============>]   4.82G  14.3MB/s    in 3m 41s  
+# # 2026-01-08 16:05:47 (22.3 MB/s) - ‘images20-track-train-1.zip’ saved [5172007826/5172007826]
+
+# labels_url = "data/box_track_labels_trainval.zip"
+# images_url = [
+#    "data/images20-track-train-1.zip",
+#    "data/images20-track-train-2.zip",
+#    "data/images20-track-train-3.zip",
+#    "data/images20-track-train-4.zip",
+#    "data/images20-track-train-5.zip",
+#    "data/images20-track-train-6.zip",
+#    "data/images20-track-train-7.zip",
+#    "data/images20-track-val-1.zip"
+# ]
+
 # --- SOURCE: VisDrone (Local Zip) ---
 [visdrone]
-enabled = true  # Set to true after downloading VisDrone zips
+enabled = false  # Set to true after downloading VisDrone zips
 num_videos = 10
 images_zip = "data/VisDrone2019-MOT-train.zip"
 labels_zip = "data/VisDrone2019-MOT-train.zip"

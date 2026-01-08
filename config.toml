@@ -19,16 +19,16 @@ num_videos = 10
 
 # Remote access from s3 mirror without download (via RemoteZip opener)
 images_url = [
-    "s3://motip-dataset/bdd-mini-data/images20-track-train-1.zip",
-    "s3://motip-dataset/bdd-mini-data/images20-track-train-2.zip",
-    "s3://motip-dataset/bdd-mini-data/images20-track-train-3.zip",
-    "s3://motip-dataset/bdd-mini-data/images20-track-train-4.zip",
-    "s3://motip-dataset/bdd-mini-data/images20-track-train-5.zip",
-    "s3://motip-dataset/bdd-mini-data/images20-track-train-6.zip",
-    "s3://motip-dataset/bdd-mini-data/images20-track-train-7.zip",
-    "s3://motip-dataset/bdd-mini-data/images20-track-val-1.zip"
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-1.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-2.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-3.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-4.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-5.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-6.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-7.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-val-1.zip"
 ]
-labels_url = "s3://motip-dataset/bdd-mini-data/box_track_labels_trainval.zip"
+labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
 
 # # Remote access from zurich mirror without download (via RemoteZip opener)
 # labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"

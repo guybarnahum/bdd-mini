@@ -16,9 +16,23 @@ test_ratio  = 0.15
 [bdd]
 enabled = true
 num_videos = 10
-# Moved URLs here since they are specific to BDD
-labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
-images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
+
+# Point to local zips we downloaded
+labels_url = "data/box_track_labels_trainval.zip"
+images_url = [
+    "data/images20-track-train-1.zip",
+    "data/images20-track-train-2.zip",
+    "data/images20-track-train-3.zip",
+    "data/images20-track-train-4.zip",
+    "data/images20-track-train-5.zip",
+    "data/images20-track-train-6.zip",
+    "data/images20-track-train-7.zip",
+    "data/images20-track-val-1.zip"
+]
+
+# # Remote access without download (via RemoteZip opener)
+# labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
+# images_url = [ "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip" ]
 
 # --- SOURCE: VisDrone (Local Zip) ---
 [visdrone]

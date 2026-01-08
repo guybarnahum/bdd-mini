@@ -449,11 +449,23 @@ def build_mini_dataset():
     
     # BDD Source
     if bdd_enabled:
-        download_queue.append({
-            "type": "bdd", 
-            "opener": RemoteZip, 
-            "path": bdd_cfg['images_url']
-        })
+        # Normalize to list (handles both string and list from config)
+        bdd_paths = bdd_cfg['images_url']
+        if isinstance(bdd_paths, str):
+            bdd_paths = [bdd_paths]
+
+        for p in bdd_paths:
+            # Check local vs remote
+            if os.path.exists(p):
+                opener = zipfile.ZipFile
+            else:
+                opener = RemoteZip
+
+            download_queue.append({
+                "type": "bdd", 
+                "opener": opener, 
+                "path": p
+            })
         
     # VisDrone Source
     if vis_cfg.get('enabled', False):

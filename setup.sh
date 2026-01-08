@@ -54,7 +54,7 @@ source "$VENV_DIR/bin/activate"
 
 # Upgrade pip and install libraries
 pip install --upgrade pip > /dev/null
-pip install requests tqdm remotezip tomli opencv-python
+pip install requests tqdm remotezip tomli opencv-python boto3
 
 echo "✅ Dependencies installed."
 

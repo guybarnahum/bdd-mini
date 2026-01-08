@@ -15,6 +15,13 @@ except ImportError:
     sys.exit(1)
 
 try:
+    import boto3
+    from botocore.exceptions import NoCredentialsError, ClientError
+except ImportError:
+    print("❌ Missing 'boto3'. For S3 support, run: pip install boto3")
+    # We don't exit here to allow running without S3 if not using S3 paths
+
+try:
     import tomllib as toml
 except ImportError:
     try:
@@ -79,6 +86,25 @@ TRAIN_RATIO = cfg['dataset'].get('train_ratio', 0.70)
 VAL_RATIO   = cfg['dataset'].get('val_ratio', 0.15)
 TEST_RATIO  = cfg['dataset'].get('test_ratio', 0.15)
 
+# --- S3 HELPER ---
+def get_s3_presigned_url(s3_path):
+    """Generates a presigned URL for an s3:// path."""
+    try:
+        # Parse s3://bucket/key
+        parts = s3_path.replace("s3://", "").split("/", 1)
+        bucket_name = parts[0]
+        object_key = parts[1]
+
+        s3_client = boto3.client('s3')
+        response = s3_client.generate_presigned_url('get_object',
+                                                    Params={'Bucket': bucket_name,
+                                                            'Key': object_key},
+                                                    ExpiresIn=3600) # 1 Hour URL
+        return response
+    except Exception as e:
+        print(f"❌ Error generating S3 URL for {s3_path}: {e}")
+        return None
+
 # --- DEBUG HELPER ---
 def print_debug_structure(data, filename="Unknown"):
     """Prints structure for debugging."""
@@ -90,6 +116,18 @@ def print_debug_structure(data, filename="Unknown"):
             print(f"   Item [0] Keys: {list(first.keys())}")
 
 def download_file(url, dest_path):
+    # Support S3 download
+    if url.startswith("s3://"):
+        print(f"⬇️  Downloading Labels from S3: {url}")
+        try:
+            parts = url.replace("s3://", "").split("/", 1)
+            s3 = boto3.client('s3')
+            s3.download_file(parts[0], parts[1], str(dest_path))
+            return
+        except Exception as e:
+             print(f"❌ S3 Download failed: {e}")
+             sys.exit(1)
+
     import requests
     if dest_path.exists():
         print(f"✅ Found existing labels at {dest_path}")
@@ -309,7 +347,12 @@ def build_mini_dataset():
     
     if bdd_enabled:
         labels_url = bdd_cfg['labels_url']
-        labels_zip_name = os.path.basename(labels_url)
+        # Handle S3 URL for filename extraction
+        if labels_url.startswith("s3://"):
+             labels_zip_name = labels_url.split("/")[-1]
+        else:
+             labels_zip_name = os.path.basename(labels_url)
+             
         labels_zip = data_dir / labels_zip_name
         download_file(labels_url, labels_zip)
 
@@ -455,16 +498,23 @@ def build_mini_dataset():
             bdd_paths = [bdd_paths]
 
         for p in bdd_paths:
-            # Check local vs remote
+            # Check local vs remote vs S3
             if os.path.exists(p):
                 opener = zipfile.ZipFile
+                path_arg = p
+            elif p.startswith("s3://"):
+                opener = RemoteZip
+                # Convert s3://... to https://... signed URL
+                path_arg = get_s3_presigned_url(p)
+                if not path_arg: continue # Skip if signing failed
             else:
                 opener = RemoteZip
+                path_arg = p
 
             download_queue.append({
                 "type": "bdd", 
                 "opener": opener, 
-                "path": p
+                "path": path_arg
             })
         
     # VisDrone Source

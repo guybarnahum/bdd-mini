@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/cd4d0d37-252e-4b0c-ba77-b6ec1234f0bb
 
 * **Hybrid Source Support:** Mix and match data from **BDD100K** (streaming) and **VisDrone** (local zip).
 * **Smart Streaming (BDD):** Connects to remote zip archives via HTTP Range Requests to download *only* the frames you need.
-* **Robust Downloading (BDD):** Supports handling split zip files (multiple URLs) for large datasets.
+* **Direct S3 Support:** Can stream frames directly from S3 buckets using presigned URLs, avoiding local disk usage.
 * **Resume Capability:** Images are cached locally in `data/image_cache`. If you interrupt the script (`Ctrl-C`), simply run it again to resume exactly where you left off.
 * **Multi-Format Export:** Generates both **COCO-Video** JSONs (Train/Val/Test) and **MOTChallenge** (`gt.txt`) formats simultaneously.
 * **Configurable Splits:** Define your own Train/Val/Test ratios in `config.toml` (e.g., 70/15/15).
@@ -41,7 +41,7 @@ bdd-mini/
 ## 🛠️ Installation
 
 1.  **Run the Setup Script:**
-    This creates the Python virtual environment and installs dependencies (`remotezip`, `tqdm`, `opencv-python`).
+    This creates the Python virtual environment and installs dependencies (`remotezip`, `tqdm`, `opencv-python`, `boto3`).
 
     ```bash
     chmod +x setup.sh
@@ -57,23 +57,77 @@ bdd-mini/
 ## 🏃 Usage
 
 ### 1. Configure Sources (`config.toml`)
-Enable or disable sources and set how many videos you want from each.
+You have three options for accessing the massive BDD100K data.
 
-* **BDD100K:** Enabled by default (Streaming).
-* **VisDrone:** Enabled by default (Requires manual download).
+#### Option A: S3 Mirror (Recommended) 
+Stream data directly from our S3 mirror (`s3://motip-datasets`). This is fast and requires no large downloads.
+* **Prerequisite:** Ensure your machine has AWS credentials or an IAM Role with `AmazonS3ReadOnlyAccess`.
 
-### 2. Prepare Data
+```toml
+[bdd]
+enabled = true
+labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
+images_url = [
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-1.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-2.zip",
+    # ... (See DATA.md for full list)
+]
+```
 
-#### BDD100K (EC2 / Server)
-Due to unstable streaming mirrors, it is recommended to download the BDD zip files manually if you are on a fast server (like AWS EC2).
-1. Download the split zip files (e.g., `images20-track-train-1.zip`, etc.) into `data/`.
-2. Update `config.toml` to point to these local files in the `images_url` list.
+#### Option B: Zurich Mirror (Public HTTP)
+Stream from the ETH Zurich public mirror. No credentials required, but can be unstable.
 
-#### VisDrone (Optional)
-If you enabled `[visdrone]`:
-1. Download **`VisDrone2019-MOT-train.zip`** (Images + Annotations).
+```toml
+[bdd]
+enabled = true
+labels_url = "[https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip](https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip)"
+images_url = [ "[https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip](https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip)" ]
+```
+
+#### Option C: Local Files (Offline)
+Download the files manually to `data/` if you have a slow connection or want to work offline.
+
+```bash
+cd data
+wget [http://128.32.162.150/bdd100k/mot20/images20-track-train-1.zip](http://128.32.162.150/bdd100k/mot20/images20-track-train-1.zip)
+# ... repeat for other parts
+```
+
+```toml
+[bdd]
+enabled = true
+labels_url = "data/box_track_labels_trainval.zip"
+images_url = [
+    "data/images20-track-train-1.zip",
+    "data/images20-track-train-2.zip",
+    # ...
+]
+```
+
+### 2. Prepare VisDrone Data (Optional)
+If you enabled `[visdrone]`, you need the raw dataset file.
+
+**Note:** Unlike BDD, VisDrone is a single monolithic 7.5GB file. Streaming it over the network is too slow, so you must download it to `data/` first.
+
+#### Option A: S3 Mirror (Recommended for EC2)
+Download the zip directly from our mirror. This takes seconds on an EC2 instance.
+
+```bash
+aws s3 cp s3://motip-datasets/bdd-mini-data/VisDrone2019-MOT-train.zip data/
+```
+
+#### Option B: Manual Download
+1. Download **`VisDrone2019-MOT-train.zip`** (Images + Annotations) from the [VisDrone Website](http://aiskyeye.com/).
 2. Place it in the `data/` folder.
-3. Update `config.toml` to point `images_zip` and `labels_zip` to this file.
+
+**Configuration:**
+Ensure `config.toml` points to the local file:
+```toml
+[visdrone]
+# Point to the local file you just downloaded
+images_zip = "data/VisDrone2019-MOT-train.zip"
+labels_zip = "data/VisDrone2019-MOT-train.zip"
+```
 
 ### 3. Build the Dataset
 Activate the environment and run the builder. It will download labels, select random videos (mixing BDD + VisDrone), and stream/extract frames.
@@ -137,22 +191,21 @@ test_ratio  = 0.15
 [bdd]
 enabled = true
 num_videos = 10
-# Can be a single URL string or a list of file paths
-images_url = [
-    "data/images20-track-train-1.zip",
-    "data/images20-track-train-2.zip",
-    # ...
-]
-labels_url = "data/box_track_labels_trainval.zip"
+# See "Usage" section for S3 vs Local vs HTTP URL options
+labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
+images_url = ["..."]
 
 [visdrone]
 enabled = true           # Set to true after downloading zips
 num_videos = 10
-images_zip = "data/VisDrone_Data.zip"
-labels_zip = "data/VisDrone_Data.zip"
+images_zip = "data/VisDrone2019-MOT-train.zip"
+labels_zip = "data/VisDrone2019-MOT-train.zip"
 ```
 
 ## ❓ Troubleshooting
+
+* **"S3 Download Failed / 403 Forbidden"**
+Ensure your environment has AWS credentials configured or an IAM role attached. You need read access to the bucket defined in `config.toml`.
 
 * **"VisDrone zip files are missing!"**
 You enabled `[visdrone]` but didn't installed the zip files in `data/`. See step 2 of Usage.
@@ -165,9 +218,6 @@ VisDrone videos often have odd resolutions (e.g., 1365px width). The included `r
 
 * **"Dataset is empty"**
 Check `config.toml`. If `num_videos` is too high (e.g., >200), the script might struggle to find enough matching sequences in the specific label zip file provided.
-
-* **"Streaming Error / Connection Reset"**
-The script relies on the ETH Zurich mirror for BDD data. If unstable, try again later or check your internet connection. The Resume feature ensures you don't lose progress. Alternatively, download the zip files manually and point config to local paths.
 
 ---
 

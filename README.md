@@ -12,6 +12,7 @@ https://github.com/user-attachments/assets/cd4d0d37-252e-4b0c-ba77-b6ec1234f0bb
 
 * **Hybrid Source Support:** Mix and match data from **BDD100K** (streaming) and **VisDrone** (local zip).
 * **Smart Streaming (BDD):** Connects to remote zip archives via HTTP Range Requests to download *only* the frames you need.
+* **Robust Downloading (BDD):** Supports handling split zip files (multiple URLs) for large datasets.
 * **Resume Capability:** Images are cached locally in `data/image_cache`. If you interrupt the script (`Ctrl-C`), simply run it again to resume exactly where you left off.
 * **Multi-Format Export:** Generates both **COCO-Video** JSONs (Train/Val/Test) and **MOTChallenge** (`gt.txt`) formats simultaneously.
 * **Configurable Splits:** Define your own Train/Val/Test ratios in `config.toml` (e.g., 70/15/15).
@@ -61,8 +62,15 @@ Enable or disable sources and set how many videos you want from each.
 * **BDD100K:** Enabled by default (Streaming).
 * **VisDrone:** Enabled by default (Requires manual download).
 
-### 2. Prepare VisDrone Data (Optional)
-If you enabled `[visdrone]`, you must download the training data manually because it cannot be streamed reliably.
+### 2. Prepare Data
+
+#### BDD100K (EC2 / Server)
+Due to unstable streaming mirrors, it is recommended to download the BDD zip files manually if you are on a fast server (like AWS EC2).
+1. Download the split zip files (e.g., `images20-track-train-1.zip`, etc.) into `data/`.
+2. Update `config.toml` to point to these local files in the `images_url` list.
+
+#### VisDrone (Optional)
+If you enabled `[visdrone]`:
 1. Download **`VisDrone2019-MOT-train.zip`** (Images + Annotations).
 2. Place it in the `data/` folder.
 3. Update `config.toml` to point `images_zip` and `labels_zip` to this file.
@@ -129,8 +137,13 @@ test_ratio  = 0.15
 [bdd]
 enabled = true
 num_videos = 10
-labels_url = "https://dl.cv.ethz.ch/bdd100k/data/box_track_labels_trainval.zip"
-images_url = "https://dl.cv.ethz.ch/bdd100k/data/track_images_train.zip"
+# Can be a single URL string or a list of file paths
+images_url = [
+    "data/images20-track-train-1.zip",
+    "data/images20-track-train-2.zip",
+    # ...
+]
+labels_url = "data/box_track_labels_trainval.zip"
 
 [visdrone]
 enabled = true           # Set to true after downloading zips
@@ -154,7 +167,7 @@ VisDrone videos often have odd resolutions (e.g., 1365px width). The included `r
 Check `config.toml`. If `num_videos` is too high (e.g., >200), the script might struggle to find enough matching sequences in the specific label zip file provided.
 
 * **"Streaming Error / Connection Reset"**
-The script relies on the ETH Zurich mirror for BDD data. If unstable, try again later or check your internet connection. The Resume feature ensures you don't lose progress.
+The script relies on the ETH Zurich mirror for BDD data. If unstable, try again later or check your internet connection. The Resume feature ensures you don't lose progress. Alternatively, download the zip files manually and point config to local paths.
 
 ---
 

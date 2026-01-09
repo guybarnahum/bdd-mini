@@ -78,7 +78,7 @@ SEED = cfg['dataset']['seed']
 OUTPUT_DIR = Path(cfg['dataset']['output_dir'])
 FRAME_STEP = cfg['dataset'].get('frame_step', 5)
 
-# Output Formats (Default to COCO if missing)
+# Output Formats (We ignore this now to generate Universal structure)
 EXPORT_FORMATS = cfg['dataset'].get('export_formats', ["coco"])
 
 # Load Ratios
@@ -175,9 +175,9 @@ def save_manifest(splits, output_root):
 # --- EXPORTERS ---
 
 def save_coco_format(split_name, video_data, output_root):
-    """Generates Standard COCO-Video JSON."""
+    """Generates Standard COCO-Video JSON pointing to Deep Structure."""
     anno_dir = output_root / "annotations"
-    anno_dir.mkdir(exist_ok=True)
+    anno_dir.mkdir(parents=True, exist_ok=True)
     
     # Check if we should skip
     if not video_data: return
@@ -200,24 +200,19 @@ def save_coco_format(split_name, video_data, output_root):
         coco["videos"].append({"id": video_idx + 1, "file_name": video_name})
         
         frames = sorted(vid_data['frames'], key=lambda x: x.get('frameIndex', 0))
+        valid_frames = [f for f in frames if f.get('frameIndex', 0) % FRAME_STEP == 0]
         
-        for frame_data in frames:
-            f_idx = frame_data.get('frameIndex', 0)
-            if f_idx % FRAME_STEP != 0: continue
+        for local_idx, frame_data in enumerate(valid_frames, start=1):
             
-            # Use auxiliary path if available (VisDrone), else standard BDD naming
-            if 'aux_path' in frame_data:
-                # visdrone/video/0001.jpg -> video-0001.jpg for flat output
-                suffix = os.path.basename(frame_data['aux_path'])
-                img_file = f"{video_name}-{suffix}"
-            else:
-                img_file = f"{video_name}-{f_idx+1:07d}.jpg"
+            # Deep Structure Path: Video/img1/00000001.jpg
+            # Note: local_idx starts at 1, matching the 1-based indexing of the file.
+            img_file = f"{video_name}/img1/{local_idx:08d}.jpg"
             
             coco["images"].append({
                 "id": global_img_id,
                 "video_id": video_idx + 1,
                 "file_name": img_file,
-                "frame_id": f_idx,
+                "frame_id": local_idx, # COCO frame_id is 1-based index in the video sequence
                 "height": 720, "width": 1280
             })
             
@@ -252,66 +247,49 @@ def save_coco_format(split_name, video_data, output_root):
     with open(anno_dir / f"{split_name}.json", 'w') as f:
         json.dump(coco, f)
 
-def save_mot_format(split_name, video_data, output_root):
-    """Generates MOTChallenge Format (gt.txt, seqinfo.ini)."""
-    mot_root = output_root / "mot_format" / split_name
-    mot_root.mkdir(parents=True, exist_ok=True)
+def save_mot_gt_file(split_name, vid_data, output_root):
+    """Writes gt.txt inside the video sequence folder."""
+    v_name = vid_data['name']
     
-    if not video_data: return
-    print(f"   - Building {split_name}/ (MOTChallenge)...")
+    # Structure: output/dataset/train/VideoName/gt/gt.txt
+    seq_dir = output_root / split_name / v_name
+    gt_dir = seq_dir / "gt"
+    gt_dir.mkdir(parents=True, exist_ok=True)
+    gt_path = gt_dir / "gt.txt"
     
-    CLASS_MAP = UNIFIED_CLASS_MAP
+    frames = sorted(vid_data['frames'], key=lambda x: x.get('frameIndex', 0))
+    valid_frames = [f for f in frames if f.get('frameIndex', 0) % FRAME_STEP == 0]
     
-    for vid_data in video_data:
-        v_name = vid_data['name']
-        
-        # 1. Create Folder Structure: output/mot_format/train/VideoName/gt/
-        seq_dir = mot_root / v_name
-        gt_dir = seq_dir / "gt"
-        gt_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 2. Generate gt.txt
-        # Format: frame, id, left, top, width, height, conf(1), class, vis(1)
-        gt_path = gt_dir / "gt.txt"
-        
-        frames = sorted(vid_data['frames'], key=lambda x: x.get('frameIndex', 0))
-        valid_frames = [f for f in frames if f.get('frameIndex', 0) % FRAME_STEP == 0]
-        
-        with open(gt_path, 'w') as f_gt:
-            # Re-index frames to start at 1 and be continuous for MOT
-            for local_frame_idx, frame_data in enumerate(valid_frames, start=1):
+    with open(gt_path, 'w') as f_gt:
+        for local_frame_idx, frame_data in enumerate(valid_frames, start=1):
+            
+            objects = frame_data.get('labels', frame_data.get('objects', []))
+            for obj in objects:
+                if obj['category'] not in UNIFIED_CLASS_MAP: continue
+                cls_id = UNIFIED_CLASS_MAP[obj['category']]
                 
-                objects = frame_data.get('labels', frame_data.get('objects', []))
-                for obj in objects:
-                    if obj['category'] not in CLASS_MAP: continue
-                    cls_id = CLASS_MAP[obj['category']]
+                # Convert UUID track ID to Integer
+                t_id_int = abs(hash((v_name, obj['id']))) % 100000 
+                
+                if 'box2d' in obj:
+                    x1, y1 = obj['box2d']['x1'], obj['box2d']['y1']
+                    w = obj['box2d']['x2'] - x1
+                    h = obj['box2d']['y2'] - y1
                     
-                    # Convert UUID track ID to Integer for MOT format
-                    # Simple hash-based approach for local uniqueness
-                    t_id_int = abs(hash((v_name, obj['id']))) % 100000 
-                    
-                    if 'box2d' in obj:
-                        x1 = obj['box2d']['x1']
-                        y1 = obj['box2d']['y1']
-                        w = obj['box2d']['x2'] - x1
-                        h = obj['box2d']['y2'] - y1
-                        
-                        # Write Line
-                        # conf=1, vis=1 (defaults)
-                        line = f"{local_frame_idx},{t_id_int},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},1,{cls_id},1\n"
-                        f_gt.write(line)
+                    # Write Line (MOT Format)
+                    line = f"{local_frame_idx},{t_id_int},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},1,{cls_id},1\n"
+                    f_gt.write(line)
 
-        # 3. Generate seqinfo.ini
-        # Required by TrackEval
-        with open(seq_dir / "seqinfo.ini", 'w') as f_ini:
-            f_ini.write("[Sequence]\n")
-            f_ini.write(f"name={v_name}\n")
-            f_ini.write(f"imDir=images_linked\n") # Placeholder, usually points to img1
-            f_ini.write(f"frameRate={30/FRAME_STEP}\n")
-            f_ini.write(f"seqLength={len(valid_frames)}\n")
-            f_ini.write(f"imWidth=1280\n")
-            f_ini.write(f"imHeight=720\n")
-            f_ini.write(f"imExt=.jpg\n")
+    # Generate seqinfo.ini (Required by TrackEval)
+    with open(seq_dir / "seqinfo.ini", 'w') as f_ini:
+        f_ini.write("[Sequence]\n")
+        f_ini.write(f"name={v_name}\n")
+        f_ini.write(f"imDir=img1\n") 
+        f_ini.write(f"frameRate={30/FRAME_STEP}\n")
+        f_ini.write(f"seqLength={len(valid_frames)}\n")
+        f_ini.write(f"imWidth=1280\n")
+        f_ini.write(f"imHeight=720\n")
+        f_ini.write(f"imExt=.jpg\n")
 
 # --- MAIN BUILDER ---
 
@@ -328,18 +306,7 @@ def build_mini_dataset():
     cache_dir.mkdir(exist_ok=True)
     out_dir = OUTPUT_DIR
     
-    splits_needed = []
-    if TRAIN_RATIO > 0: splits_needed.append("train")
-    if VAL_RATIO > 0:   splits_needed.append("val")
-    if TEST_RATIO > 0:  splits_needed.append("test")
-    
-    img_roots = {}
-    for s in splits_needed:
-        path = out_dir / "images" / s
-        path.mkdir(parents=True, exist_ok=True)
-        img_roots[s] = path
-    
-    print(f"⚙️  Config: Seed {SEED} | Step: {FRAME_STEP} | Formats: {EXPORT_FORMATS}")
+    print(f"⚙️  Config: Seed {SEED} | Step: {FRAME_STEP}")
 
     # 3. Get Labels (BDD)
     bdd_cfg = cfg.get('bdd', {})
@@ -403,9 +370,6 @@ def build_mini_dataset():
         
         if not lbl_zip_path.exists() or not img_zip_path.exists():
             print("\n❌ Error: VisDrone is enabled but zip files are missing!")
-            print(f"   - Missing: {lbl_zip_path if not lbl_zip_path.exists() else ''}")
-            print(f"   - Missing: {img_zip_path if not img_zip_path.exists() else ''}")
-            print("   👉 Please download them to the 'data/' folder or disable [visdrone] in config.")
             sys.exit(1)
         
         if lbl_zip_path.exists():
@@ -457,9 +421,7 @@ def build_mini_dataset():
                         })
 
     if len(parsed_videos) == 0:
-        print("\n❌ No videos selected! Check that:")
-        print("   1. [bdd] or [visdrone] is enabled in config.toml")
-        print("   2. You have downloaded the required zip files for enabled sources.")
+        print("\n❌ No videos selected!")
         sys.exit(1)
 
     print(f"✅ Parsed {len(parsed_videos)} valid videos.")
@@ -484,29 +446,26 @@ def build_mini_dataset():
 
     print(f"📊 Final Split: {len(train_set)} Train, {len(val_set)} Val, {len(test_set)} Test")
 
-    # 6. Stream Images
-    print(f"☁️  Checking Cache & Streaming Frames...")
+    # 6. Stream Images & Organize (Deep MOT Structure)
+    print(f"☁️  Streaming Frames to Universal MOT Structure...")
     
     # Define Download Sources
     download_queue = []
     
     # BDD Source
     if bdd_enabled:
-        # Normalize to list (handles both string and list from config)
         bdd_paths = bdd_cfg['images_url']
         if isinstance(bdd_paths, str):
             bdd_paths = [bdd_paths]
 
         for p in bdd_paths:
-            # Check local vs remote vs S3
             if os.path.exists(p):
                 opener = zipfile.ZipFile
                 path_arg = p
             elif p.startswith("s3://"):
                 opener = RemoteZip
-                # Convert s3://... to https://... signed URL
                 path_arg = get_s3_presigned_url(p)
-                if not path_arg: continue # Skip if signing failed
+                if not path_arg: continue
             else:
                 opener = RemoteZip
                 path_arg = p
@@ -529,7 +488,6 @@ def build_mini_dataset():
 
     for source in download_queue:
         try:
-            # Check if source file exists for local zips
             if source['type'] == 'visdrone' and not Path(source['path']).exists():
                 print(f"⚠️  Skipping VisDrone images: {source['path']} not found")
                 continue
@@ -543,11 +501,8 @@ def build_mini_dataset():
                     if not filename.endswith('.jpg'): continue
                     
                     parts = filename.split('/')
-                    # BDD: .../video/frame.jpg, VisDrone: .../video/frame.jpg
                     if len(parts) >= 2:
                         v_name = parts[-2]
-                        
-                        # Check if this video is needed AND belongs to this source
                         if v_name in video_to_split:
                             v_info = video_source_map[v_name]
                             if v_info['source_type'] == source['type']:
@@ -569,7 +524,7 @@ def build_mini_dataset():
                         
                         if frame_idx % FRAME_STEP != 0: continue 
 
-                        # Cache Logic (Prefix with source to avoid collisions)
+                        # 1. Cache (Safe Resume)
                         cache_fname = f"{source['type']}_{v_name}_{fname}"
                         cached_file = cache_dir / cache_fname
                         
@@ -581,21 +536,24 @@ def build_mini_dataset():
                         else:
                             cache_count += 1
                         
-                        # --- FIX: Filename flattening logic ---
-                        # If the filename already contains the video name (BDD), don't prepend it again.
-                        if fname.startswith(v_name):
-                            out_name = fname
-                        else:
-                            out_name = f"{v_name}-{fname}"
-                        # -------------------------------------
+                        # 2. Organize into Deep Structure (NO SYMLINKS)
+                        # Structure: output/dataset/train/VideoName/img1/00000001.jpg
                         
-                        target = img_roots[split] / out_name
-                        if not target.exists():
-                            shutil.copy2(str(cached_file), str(target))
+                        # Calculate local index (1-based, sequential for this video)
+                        # Matches logic in save_mot_gt and save_coco
+                        target_local_idx = (frame_idx // FRAME_STEP) + 1
+                        
+                        target_dir = out_dir / split / v_name / "img1"
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        target_name = f"{target_local_idx:08d}.jpg"
+                        target_path = target_dir / target_name
+                        
+                        if not target_path.exists():
+                            shutil.copy2(str(cached_file), str(target_path))
 
                     except Exception as e: pass
             
-            # Cleanup temp extract folder for this source
             if source['type'] == 'bdd' and (data_dir / "bdd100k").exists():
                 shutil.rmtree(data_dir / "bdd100k")
                 
@@ -605,20 +563,21 @@ def build_mini_dataset():
 
     print(f"✅ Images: {dl_count} Downloaded, {cache_count} Cached.")
 
-    # 7. Generate Output Formats
-    print("📝 Generating Outputs...")
+    # 7. Generate Universal Outputs
+    print("📝 Generating Universal Metadata (COCO + MOT)...")
     split_datasets = [("train", train_set), ("val", val_set), ("test", test_set)]
 
     for split, data in split_datasets:
         if not data: continue
         
-        # Always output COCO (Standard MOTIP) if requested
-        if "coco" in EXPORT_FORMATS:
-            save_coco_format(split, data, out_dir)
-            
-        # Optional MOT Challenge Format
-        if "mot" in EXPORT_FORMATS:
-            save_mot_format(split, data, out_dir)
+        # 1. Always generate COCO JSON (Crucial for Training)
+        # This will now point "file_name" to "Video/img1/00000001.jpg"
+        save_coco_format(split, data, out_dir)
+        
+        # 2. Always generate MOT GT (Crucial for Evaluation/Tracking)
+        # This puts gt.txt inside the video folders
+        for vid in data:
+            save_mot_gt_file(split, vid, out_dir)
     
     # Save the human-readable manifest
     splits_dict = {"train": train_set, "val": val_set, "test": test_set}
@@ -630,7 +589,7 @@ def build_mini_dataset():
         print(f.read())
     print("-" * 50)
 
-    print(f"🚀 Done! Mini-BDD ready at: {out_dir}")
+    print(f"🚀 Done! Universal Mini-BDD ready at: {out_dir}")
 
 if __name__ == "__main__":
     try:

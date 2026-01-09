@@ -4,9 +4,6 @@ seed = 12
 output_dir = "output/dataset"
 frame_step = 5            # Keep 1 frame every 5 (approx 6 FPS)
 
-# Export Formats: "coco" (MOTIP), "mot" (TrackEval)
-export_formats = ["coco", "mot"]
-
 # Splits (Must sum to 1.0)
 train_ratio = 0.70
 val_ratio   = 0.15

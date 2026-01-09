@@ -21,7 +21,9 @@ def draw_hud(img, frame_idx, video_name, fmt):
 # --- DATA LOADERS ---
 def load_from_coco(split, output_dir):
     json_path = Path(output_dir) / "annotations" / f"{split}.json"
-    if not json_path.exists(): return None
+    if not json_path.exists(): 
+        print(f"❌ Annotations not found: {json_path}")
+        return None
     
     with open(json_path, 'r') as f:
         data = json.load(f)
@@ -47,28 +49,36 @@ def load_from_coco(split, output_dir):
         for a in anns:
             x, y, w, h = a['bbox']
             parsed_anns.append((x, y, w, h, a['track_id']))
+        
+        # FIX: Construct full path from Deep Structure
+        # JSON file_name is "Video/img1/00000001.jpg"
+        # We prepend output_dir/split/
+        full_path = Path(output_dir) / split / img['file_name']
             
         video_content[vid_name].append({
-            "file_name": img['file_name'],
+            "file_name": str(full_path),
             "anns": parsed_anns
         })
         
     return video_content
 
 def load_from_mot(split, output_dir):
-    mot_root = Path(output_dir) / "mot_format" / split
-    img_root = Path(output_dir) / "images" / split
-    if not mot_root.exists(): return None
+    # FIX: Root is now the split folder itself containing video subfolders
+    split_root = Path(output_dir) / split
+    if not split_root.exists(): return None
     
     video_content = {}
     
-    # Iterate over video folders in mot_format/split/
-    for vid_dir in mot_root.iterdir():
+    # Iterate over video folders in the split directory
+    for vid_dir in split_root.iterdir():
         if not vid_dir.is_dir(): continue
         vid_name = vid_dir.name
-        gt_path = vid_dir / "gt" / "gt.txt"
         
-        if not gt_path.exists(): continue
+        # Check for Deep MOT structure: gt/gt.txt and img1/
+        gt_path = vid_dir / "gt" / "gt.txt"
+        img_dir = vid_dir / "img1"
+        
+        if not gt_path.exists() or not img_dir.exists(): continue
         
         # 1. Parse GT file
         frame_data = {}
@@ -83,17 +93,20 @@ def load_from_mot(split, output_dir):
                 if f_idx not in frame_data: frame_data[f_idx] = []
                 frame_data[f_idx].append((bbox[0], bbox[1], bbox[2], bbox[3], tid))
                 
-        # 2. Match with Images (Sorted by filename)
-        # FIX: Added hyphen to ensure we don't match substrings (e.g. video1 vs video10)
-        all_files = sorted([f.name for f in img_root.glob(f"{vid_name}-*.jpg")])
+        # 2. Get Images (Sorted numerically from img1 folder)
+        all_files = sorted(list(img_dir.glob("*.jpg")))
         
         frames_list = []
-        for i, fname in enumerate(all_files):
-            # Map 0-based list index to 1-based GT frame index
-            gt_frame_idx = i + 1 
+        for i, img_path in enumerate(all_files):
+            # Map filename '00000001.jpg' -> int(1) to match GT
+            try:
+                gt_frame_idx = int(img_path.stem)
+            except:
+                gt_frame_idx = i + 1 
+            
             anns = frame_data.get(gt_frame_idx, [])
             frames_list.append({
-                "file_name": fname,
+                "file_name": str(img_path),
                 "anns": anns
             })
             
@@ -103,13 +116,13 @@ def load_from_mot(split, output_dir):
 
 # --- RENDERER ---
 def render_video(fmt, split, data_dir, specific_video=None):
-    img_root = Path(data_dir) / "images" / split
+    # Removed old img_root logic; we now trust the loaders to provide full paths
     
     # User requested: output/rendered
     movie_out_dir = Path("output/rendered")
     movie_out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"📂 Loading data from {fmt.upper()} format...")
+    print(f"📂 Loading data from {fmt.upper()} format in {data_dir}...")
     
     if fmt == "coco":
         content = load_from_coco(split, data_dir)
@@ -124,7 +137,7 @@ def render_video(fmt, split, data_dir, specific_video=None):
     if specific_video:
         target_vid = specific_video
         if target_vid not in content:
-            print(f"❌ Video '{target_vid}' not found.")
+            print(f"❌ Video '{target_vid}' not found in {list(content.keys())[:3]}...")
             return
     else:
         target_vid = random.choice(list(content.keys()))
@@ -138,7 +151,8 @@ def render_video(fmt, split, data_dir, specific_video=None):
         return
 
     # Setup FFmpeg
-    first_path = img_root / frames[0]['file_name']
+    # FIX: Use the full path provided by loader
+    first_path = Path(frames[0]['file_name'])
     if not first_path.exists():
         print(f"❌ Image missing: {first_path}")
         return
@@ -175,7 +189,8 @@ def render_video(fmt, split, data_dir, specific_video=None):
         proc = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=None)
         
         for i, frame_info in enumerate(frames):
-            img = cv2.imread(str(img_root / frame_info['file_name']))
+            # FIX: Load image using the absolute path
+            img = cv2.imread(frame_info['file_name'])
             if img is None: continue
             
             # --- FIX: Resize image if it doesn't match the forced even dimensions ---

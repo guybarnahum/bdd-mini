@@ -291,6 +291,24 @@ def save_mot_gt_file(split_name, vid_data, output_root):
         f_ini.write(f"imHeight=720\n")
         f_ini.write(f"imExt=.jpg\n")
 
+def save_seqmap(split_name, video_data, output_root):
+    """Generates a seqmap file listing all video names for evaluation."""
+    if not video_data: return
+    
+    seqmap_path = output_root / f"{split_name}_seqmap.txt"
+    print(f"   - Building {seqmap_path.name}...")
+    
+    # Sort videos by name to ensure consistent order
+    sorted_videos = sorted(video_data, key=lambda x: x['name'])
+    
+    with open(seqmap_path, 'w') as f:
+        # Standard MOT seqmaps usually list the sequence name, one per line.
+        # TrackEval can handle 'name' header or no header. 
+        # We write 'name' header to be safe with pandas readers.
+        f.write("name\n")
+        for v in sorted_videos:
+            f.write(f"{v['name']}\n")
+
 # --- MAIN BUILDER ---
 
 def build_mini_dataset():
@@ -578,6 +596,9 @@ def build_mini_dataset():
         # This puts gt.txt inside the video folders
         for vid in data:
             save_mot_gt_file(split, vid, out_dir)
+            
+        # 3. Always generate Seqmap (Crucial for TrackEval)
+        save_seqmap(split, data, out_dir)
     
     # Save the human-readable manifest
     splits_dict = {"train": train_set, "val": val_set, "test": test_set}

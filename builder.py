@@ -4,6 +4,7 @@ import random
 import sys
 import shutil
 import zipfile
+import re
 from pathlib import Path
 from tqdm import tqdm
 
@@ -45,7 +46,6 @@ cfg = load_config()
 # --- GLOBAL CLASS MAPPINGS ---
 
 # 1. Output Mapping (String -> MOTIP ID)
-# Used by both COCO and MOT exporters
 UNIFIED_CLASS_MAP = {
     "pedestrian": 1, 
     "rider": 1, 
@@ -63,7 +63,6 @@ COCO_CATEGORIES = [
 ]
 
 # 3. VisDrone Raw ID -> String Label
-# Used during VisDrone parsing
 VISDRONE_RAW_MAP = {
     1: "pedestrian", # Pedestrian
     2: "pedestrian", # People
@@ -73,12 +72,15 @@ VISDRONE_RAW_MAP = {
     9: "car"         # Bus
 }
 
+# 4. DanceTrack Raw ID -> String Label
+DANCETRACK_RAW_MAP = {
+    1: "pedestrian" 
+}
+
 # Load basic settings
 SEED = cfg['dataset']['seed']
 OUTPUT_DIR = Path(cfg['dataset']['output_dir'])
 FRAME_STEP = cfg['dataset'].get('frame_step', 5)
-
-# Output Formats (We ignore this now to generate Universal structure)
 EXPORT_FORMATS = cfg['dataset'].get('export_formats', ["coco"])
 
 # Load Ratios
@@ -90,33 +92,19 @@ TEST_RATIO  = cfg['dataset'].get('test_ratio', 0.15)
 def get_s3_presigned_url(s3_path):
     """Generates a presigned URL for an s3:// path."""
     try:
-        # Parse s3://bucket/key
         parts = s3_path.replace("s3://", "").split("/", 1)
         bucket_name = parts[0]
         object_key = parts[1]
 
         s3_client = boto3.client('s3')
-        response = s3_client.generate_presigned_url('get_object',
-                                                    Params={'Bucket': bucket_name,
-                                                            'Key': object_key},
-                                                    ExpiresIn=3600) # 1 Hour URL
-        return response
+        return s3_client.generate_presigned_url('get_object',
+                                                Params={'Bucket': bucket_name, 'Key': object_key},
+                                                ExpiresIn=3600)
     except Exception as e:
         print(f"❌ Error generating S3 URL for {s3_path}: {e}")
         return None
 
-# --- DEBUG HELPER ---
-def print_debug_structure(data, filename="Unknown"):
-    """Prints structure for debugging."""
-    print(f"\n🚫 STRUCTURE MISMATCH IN: {filename}")
-    print(f"   Type: {type(data)}")
-    if isinstance(data, list) and len(data) > 0:
-        first = data[0]
-        if isinstance(first, dict):
-            print(f"   Item [0] Keys: {list(first.keys())}")
-
 def download_file(url, dest_path):
-    # Support S3 download
     if url.startswith("s3://"):
         print(f"⬇️  Downloading Labels from S3: {url}")
         try:
@@ -144,51 +132,28 @@ def download_file(url, dest_path):
         sys.exit(1)
 
 def save_manifest(splits, output_root):
-    """Generates a simple text manifest of all processed videos."""
     manifest_path = output_root / "manifest.txt"
-    
     print(f"📝 Saving manifest to {manifest_path}...")
-    
     with open(manifest_path, 'w') as f:
-        f.write(f"BDD-Mini Build Manifest\n")
-        f.write(f"=======================\n\n")
-        
+        f.write(f"BDD-Mini Build Manifest\n=======================\n\n")
         for split_name, video_list in splits.items():
             if not video_list: continue
-            
-            f.write(f"[{split_name.upper()}] - {len(video_list)} videos\n")
-            f.write("-" * 40 + "\n")
-            
-            # Sort for readability
+            f.write(f"[{split_name.upper()}] - {len(video_list)} videos\n" + "-" * 40 + "\n")
             sorted_videos = sorted(video_list, key=lambda x: x['name'])
-            
             for v in sorted_videos:
-                # Format: Source | Video Name | Frame Count
-                source = v.get('source_type', 'unknown').ljust(10)
-                name = v['name'].ljust(30)
-                frame_count = len(v.get('frames', []))
-                
-                f.write(f"{source} | {name} | {frame_count} frames\n")
-            
+                f.write(f"{v.get('source_type', 'unknown').ljust(10)} | {v['name'].ljust(30)} | {len(v.get('frames', []))} frames\n")
             f.write("\n")
 
 # --- EXPORTERS ---
-
 def save_coco_format(split_name, video_data, output_root):
-    """Generates Standard COCO-Video JSON pointing to Deep Structure."""
     anno_dir = output_root / "annotations"
     anno_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Check if we should skip
     if not video_data: return
 
     print(f"   - Building {split_name}.json (COCO)...")
     
     CLASS_MAP = UNIFIED_CLASS_MAP
-    coco = {
-        "videos": [], "images": [], "annotations": [],
-        "categories": COCO_CATEGORIES
-    }
+    coco = {"videos": [], "images": [], "annotations": [], "categories": COCO_CATEGORIES}
     
     global_img_id = 1
     global_ann_id = 1
@@ -203,16 +168,12 @@ def save_coco_format(split_name, video_data, output_root):
         valid_frames = [f for f in frames if f.get('frameIndex', 0) % FRAME_STEP == 0]
         
         for local_idx, frame_data in enumerate(valid_frames, start=1):
-            
-            # Deep Structure Path: Video/img1/00000001.jpg
-            # Note: local_idx starts at 1, matching the 1-based indexing of the file.
             img_file = f"{video_name}/img1/{local_idx:08d}.jpg"
-            
             coco["images"].append({
                 "id": global_img_id,
                 "video_id": video_idx + 1,
                 "file_name": img_file,
-                "frame_id": local_idx, # COCO frame_id is 1-based index in the video sequence
+                "frame_id": local_idx,
                 "height": 720, "width": 1280
             })
             
@@ -227,8 +188,7 @@ def save_coco_format(split_name, video_data, output_root):
                 
                 if 'box2d' in obj:
                     x1, y1 = obj['box2d']['x1'], obj['box2d']['y1']
-                    w = obj['box2d']['x2'] - x1
-                    h = obj['box2d']['y2'] - y1
+                    w, h = obj['box2d']['x2'] - x1, obj['box2d']['y2'] - y1
                 else: continue
 
                 coco["annotations"].append({
@@ -248,74 +208,43 @@ def save_coco_format(split_name, video_data, output_root):
         json.dump(coco, f)
 
 def save_mot_gt_file(split_name, vid_data, output_root):
-    """Writes gt.txt inside the video sequence folder."""
     v_name = vid_data['name']
-    
-    # Structure: output/dataset/train/VideoName/gt/gt.txt
     seq_dir = output_root / split_name / v_name
     gt_dir = seq_dir / "gt"
     gt_dir.mkdir(parents=True, exist_ok=True)
-    gt_path = gt_dir / "gt.txt"
     
     frames = sorted(vid_data['frames'], key=lambda x: x.get('frameIndex', 0))
     valid_frames = [f for f in frames if f.get('frameIndex', 0) % FRAME_STEP == 0]
     
-    with open(gt_path, 'w') as f_gt:
+    with open(gt_dir / "gt.txt", 'w') as f_gt:
         for local_frame_idx, frame_data in enumerate(valid_frames, start=1):
-            
-            objects = frame_data.get('labels', frame_data.get('objects', []))
-            for obj in objects:
+            for obj in frame_data.get('labels', frame_data.get('objects', [])):
                 if obj['category'] not in UNIFIED_CLASS_MAP: continue
                 cls_id = UNIFIED_CLASS_MAP[obj['category']]
-                
-                # Convert UUID track ID to Integer
                 t_id_int = abs(hash((v_name, obj['id']))) % 100000 
-                
                 if 'box2d' in obj:
                     x1, y1 = obj['box2d']['x1'], obj['box2d']['y1']
-                    w = obj['box2d']['x2'] - x1
-                    h = obj['box2d']['y2'] - y1
-                    
-                    # Write Line (MOT Format)
-                    line = f"{local_frame_idx},{t_id_int},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},1,{cls_id},1\n"
-                    f_gt.write(line)
+                    w, h = obj['box2d']['x2'] - x1, obj['box2d']['y2'] - y1
+                    f_gt.write(f"{local_frame_idx},{t_id_int},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},1,{cls_id},1\n")
 
-    # Generate seqinfo.ini (Required by TrackEval)
     with open(seq_dir / "seqinfo.ini", 'w') as f_ini:
-        f_ini.write("[Sequence]\n")
-        f_ini.write(f"name={v_name}\n")
-        f_ini.write(f"imDir=img1\n") 
-        f_ini.write(f"frameRate={30/FRAME_STEP}\n")
-        f_ini.write(f"seqLength={len(valid_frames)}\n")
-        f_ini.write(f"imWidth=1280\n")
-        f_ini.write(f"imHeight=720\n")
-        f_ini.write(f"imExt=.jpg\n")
+        f_ini.write(f"[Sequence]\nname={v_name}\nimDir=img1\nframeRate={30/FRAME_STEP}\n")
+        f_ini.write(f"seqLength={len(valid_frames)}\nimWidth=1280\nimHeight=720\nimExt=.jpg\n")
 
 def save_seqmap(split_name, video_data, output_root):
-    """Generates a seqmap file listing all video names for evaluation."""
     if not video_data: return
-    
     seqmap_path = output_root / f"{split_name}_seqmap.txt"
     print(f"   - Building {seqmap_path.name}...")
-    
-    # Sort videos by name to ensure consistent order
-    sorted_videos = sorted(video_data, key=lambda x: x['name'])
-    
     with open(seqmap_path, 'w') as f:
-        # Standard MOT seqmaps usually list the sequence name, one per line.
-        # TrackEval can handle 'name' header or no header. 
-        # We write 'name' header to be safe with pandas readers.
         f.write("name\n")
-        for v in sorted_videos:
+        for v in sorted(video_data, key=lambda x: x['name']):
             f.write(f"{v['name']}\n")
 
 # --- MAIN BUILDER ---
-
 def build_mini_dataset():
     # 1. Validate Ratios
-    total_ratio = TRAIN_RATIO + VAL_RATIO + TEST_RATIO
-    if abs(total_ratio - 1.0) > 0.001:
-        print(f"⚠️ Warning: Ratios sum to {total_ratio:.2f}, not 1.0.")
+    if abs((TRAIN_RATIO + VAL_RATIO + TEST_RATIO) - 1.0) > 0.001:
+        print(f"⚠️ Warning: Ratios sum to {(TRAIN_RATIO + VAL_RATIO + TEST_RATIO):.2f}, not 1.0.")
 
     # 2. Setup Directories
     data_dir = Path("data")
@@ -323,21 +252,14 @@ def build_mini_dataset():
     cache_dir = data_dir / "image_cache"
     cache_dir.mkdir(exist_ok=True)
     out_dir = OUTPUT_DIR
-    
     print(f"⚙️  Config: Seed {SEED} | Step: {FRAME_STEP}")
 
     # 3. Get Labels (BDD)
     bdd_cfg = cfg.get('bdd', {})
     bdd_enabled = bdd_cfg.get('enabled', True)
-    
     if bdd_enabled:
         labels_url = bdd_cfg['labels_url']
-        # Handle S3 URL for filename extraction
-        if labels_url.startswith("s3://"):
-             labels_zip_name = labels_url.split("/")[-1]
-        else:
-             labels_zip_name = os.path.basename(labels_url)
-             
+        labels_zip_name = labels_url.split("/")[-1] if labels_url.startswith("s3://") else os.path.basename(labels_url)
         labels_zip = data_dir / labels_zip_name
         download_file(labels_url, labels_zip)
 
@@ -348,162 +270,113 @@ def build_mini_dataset():
     # --- BDD Source ---
     if bdd_enabled:
         with zipfile.ZipFile(labels_zip, 'r') as z_lbl:
-            all_json = [f for f in z_lbl.namelist() if f.endswith(".json") and "train" in f]
-            all_json.sort() # Deterministic Sort
-            
+            all_json = sorted([f for f in z_lbl.namelist() if f.endswith(".json") and "train" in f])
             random.seed(SEED)
-            bdd_num = bdd_cfg.get('num_videos', 10) # Default to 10 if missing
-            if len(all_json) < bdd_num:
-                selected_files = all_json
-            else:
-                selected_files = random.sample(all_json, bdd_num)
+            selected_files = random.sample(all_json, min(len(all_json), bdd_cfg.get('num_videos', 10)))
             
             for f in selected_files:
-                content = z_lbl.read(f)
-                raw_data = json.loads(content)
-                
-                # Defensive checks
-                if not isinstance(raw_data, list) or len(raw_data) == 0: continue
-                if not isinstance(raw_data[0], dict): continue
-                
-                first = raw_data[0]
-                v_name = first.get('videoName', os.path.basename(f).replace('.json', ''))
-                
-                if 'labels' not in first and 'objects' not in first:
-                    print(f"❌ Missing labels in {f}")
-                    continue
-
-                parsed_videos.append({
-                    "name": v_name, 
-                    "frames": raw_data, 
-                    "source_type": "bdd"
-                })
+                raw_data = json.loads(z_lbl.read(f))
+                if not raw_data or not isinstance(raw_data[0], dict): continue
+                v_name = raw_data[0].get('videoName', os.path.basename(f).replace('.json', ''))
+                parsed_videos.append({"name": v_name, "frames": raw_data, "source_type": "bdd"})
 
     # --- VisDrone Source ---
     vis_cfg = cfg.get('visdrone', {})
     if vis_cfg.get('enabled', False):
         print("🚁 Processing VisDrone metadata...")
         lbl_zip_path = Path(vis_cfg.get('labels_zip', ''))
-        img_zip_path = Path(vis_cfg.get('images_zip', ''))
-        
-        if not lbl_zip_path.exists() or not img_zip_path.exists():
-            print("\n❌ Error: VisDrone is enabled but zip files are missing!")
-            sys.exit(1)
-        
         if lbl_zip_path.exists():
             with zipfile.ZipFile(lbl_zip_path, 'r') as z_vis:
                 txt_files = sorted([f for f in z_vis.namelist() if f.endswith(".txt") and "__MACOSX" not in f])
                 random.seed(SEED)
-                vis_num = vis_cfg.get('num_videos', 10)
-                selected_vis = random.sample(txt_files, min(len(txt_files), vis_num))
-                
-                CAT_MAP = VISDRONE_RAW_MAP
+                selected_vis = random.sample(txt_files, min(len(txt_files), vis_cfg.get('num_videos', 10)))
                 
                 for f in selected_vis:
                     lines = z_vis.read(f).decode('utf-8').strip().split('\n')
                     seq_name = Path(f).stem
-                    
                     frame_dict = {}
                     for line in lines:
                         p = line.split(',')
                         if len(p)<8: continue
-                        cat_id = int(p[7])
-                        if cat_id not in CAT_MAP: continue
-                        
+                        if int(p[7]) not in VISDRONE_RAW_MAP: continue
                         f_idx = int(p[0])
-                        obj = {
-                            "category": CAT_MAP[cat_id],
-                            "id": int(p[1]),
-                            "box2d": {"x1":int(p[2]), "y1":int(p[3]), "x2":int(p[2])+int(p[4]), "y2":int(p[3])+int(p[5])}
-                        }
-                        if f_idx not in frame_dict: frame_dict[f_idx] = []
-                        frame_dict[f_idx].append(obj)
+                        obj = {"category": VISDRONE_RAW_MAP[int(p[7])], "id": int(p[1]), "box2d": {"x1":int(p[2]), "y1":int(p[3]), "x2":int(p[2])+int(p[4]), "y2":int(p[3])+int(p[5])}}
+                        frame_dict.setdefault(f_idx, []).append(obj)
                     
-                    # Convert to BDD format
-                    vis_frames = []
                     if frame_dict:
-                        max_frame = max(frame_dict.keys())
-                        for i in range(1, max_frame+1):
-                            vis_frames.append({
-                                "frameIndex": i-1,
-                                "videoName": seq_name,
-                                "labels": frame_dict.get(i, []),
-                                "aux_path": f"{seq_name}/{i:07d}.jpg"
-                            })
-                        
                         parsed_videos.append({
                             "name": seq_name,
-                            "frames": vis_frames,
-                            "source_type": "visdrone",
-                            "zip_path": vis_cfg.get('images_zip')
+                            "frames": [{"frameIndex": i-1, "videoName": seq_name, "labels": frame_dict.get(i, [])} for i in range(1, max(frame_dict.keys())+1)],
+                            "source_type": "visdrone"
                         })
 
-    if len(parsed_videos) == 0:
-        print("\n❌ No videos selected!")
-        sys.exit(1)
+    # --- DanceTrack Source ---
+    dt_cfg = cfg.get('dancetrack', {})
+    if dt_cfg.get('enabled', False):
+        print("💃 Processing DanceTrack metadata...")
+        dt_num, dt_collected = dt_cfg.get('num_videos', 10), 0
+        dt_urls = dt_cfg['images_url'] if isinstance(dt_cfg['images_url'], list) else [dt_cfg['images_url']]
 
+        for zip_url in dt_urls:
+            if dt_collected >= dt_num: break
+            actual_url = get_s3_presigned_url(zip_url) if zip_url.startswith("s3://") else zip_url
+            try:
+                with RemoteZip(actual_url) as z_dt:
+                    seq_gt_files = [f for f in z_dt.namelist() if f.endswith('gt/gt.txt')]
+                    random.seed(SEED); random.shuffle(seq_gt_files)
+                    
+                    for gt_f in seq_gt_files:
+                        if dt_collected >= dt_num: break
+                        seq_name = gt_f.split('/')[-3] if len(gt_f.split('/')) > 2 else "unknown"
+                        lines = z_dt.read(gt_f).decode('utf-8').strip().split('\n')
+                        frame_dict = {}
+                        for line in lines:
+                            p = line.split(',')
+                            if len(p) < 8 or int(float(p[7])) not in DANCETRACK_RAW_MAP: continue
+                            f_idx = int(p[0])
+                            obj = {"category": DANCETRACK_RAW_MAP[int(float(p[7]))], "id": int(p[1]), "box2d": {"x1": float(p[2]), "y1": float(p[3]), "x2": float(p[2]) + float(p[4]), "y2": float(p[3]) + float(p[5])}}
+                            frame_dict.setdefault(f_idx, []).append(obj)
+                        
+                        if frame_dict:
+                            parsed_videos.append({
+                                "name": seq_name,
+                                "frames": [{"frameIndex": i-1, "videoName": seq_name, "labels": frame_dict.get(i, [])} for i in range(1, max(frame_dict.keys())+1)],
+                                "source_type": "dancetrack"
+                            })
+                            dt_collected += 1
+            except Exception as e: print(f"⚠️  Skipping DanceTrack Zip {zip_url}: {e}")
+
+    if not parsed_videos: print("\n❌ No videos selected!"); sys.exit(1)
     print(f"✅ Parsed {len(parsed_videos)} valid videos.")
 
     # 5. Apply Splits
     random.shuffle(parsed_videos)
     n_train = int(len(parsed_videos) * TRAIN_RATIO)
     n_val = int(len(parsed_videos) * VAL_RATIO)
+    train_set, val_set, test_set = parsed_videos[:n_train], parsed_videos[n_train:n_train+n_val], parsed_videos[n_train+n_val:]
     
-    train_set = parsed_videos[:n_train]
-    val_set = parsed_videos[n_train:n_train+n_val]
-    test_set = parsed_videos[n_train+n_val:] if TEST_RATIO > 0 else []
-
-    # Map video -> split
-    video_to_split = {}
-    for v in train_set: video_to_split[v['name']] = "train"
-    for v in val_set:   video_to_split[v['name']] = "val"
-    for v in test_set:  video_to_split[v['name']] = "test"
-    
-    # Also map video -> source info for streaming
+    video_to_split = {v['name']: s for s, lst in [("train", train_set), ("val", val_set), ("test", test_set)] for v in lst}
     video_source_map = {v['name']: v for v in parsed_videos}
-
     print(f"📊 Final Split: {len(train_set)} Train, {len(val_set)} Val, {len(test_set)} Test")
 
-    # 6. Stream Images & Organize (Deep MOT Structure)
+    # 6. Stream Images
     print(f"☁️  Streaming Frames to Universal MOT Structure...")
-    
-    # Define Download Sources
     download_queue = []
     
-    # BDD Source
     if bdd_enabled:
-        bdd_paths = bdd_cfg['images_url']
-        if isinstance(bdd_paths, str):
-            bdd_paths = [bdd_paths]
-
-        for p in bdd_paths:
-            if os.path.exists(p):
-                opener = zipfile.ZipFile
-                path_arg = p
-            elif p.startswith("s3://"):
-                opener = RemoteZip
-                path_arg = get_s3_presigned_url(p)
-                if not path_arg: continue
-            else:
-                opener = RemoteZip
-                path_arg = p
-
-            download_queue.append({
-                "type": "bdd", 
-                "opener": opener, 
-                "path": path_arg
-            })
-        
-    # VisDrone Source
+        for p in (bdd_cfg['images_url'] if isinstance(bdd_cfg['images_url'], list) else [bdd_cfg['images_url']]):
+            url = get_s3_presigned_url(p) if p.startswith("s3://") else p
+            if url: download_queue.append({"type": "bdd", "opener": RemoteZip if "http" in url else zipfile.ZipFile, "path": url})
+            
     if vis_cfg.get('enabled', False):
-        download_queue.append({
-            "type": "visdrone", 
-            "opener": zipfile.ZipFile, 
-            "path": vis_cfg.get('images_zip')
-        })
+        download_queue.append({"type": "visdrone", "opener": zipfile.ZipFile, "path": vis_cfg.get('images_zip')})
+
+    if dt_cfg.get('enabled', False):
+        for p in (dt_cfg['images_url'] if isinstance(dt_cfg['images_url'], list) else [dt_cfg['images_url']]):
+            url = get_s3_presigned_url(p) if p.startswith("s3://") else p
+            if url: download_queue.append({"type": "dancetrack", "opener": RemoteZip, "path": url})
 
     dl_count, cache_count = 0, 0
-
     for source in download_queue:
         try:
             if source['type'] == 'visdrone' and not Path(source['path']).exists():
@@ -514,107 +387,73 @@ def build_mini_dataset():
                 all_files = z.namelist()
                 files_to_process = []
                 
-                # Filter files for this source
                 for filename in all_files:
                     if not filename.endswith('.jpg'): continue
                     
-                    parts = filename.split('/')
-                    if len(parts) >= 2:
-                        v_name = parts[-2]
-                        if v_name in video_to_split:
-                            v_info = video_source_map[v_name]
-                            if v_info['source_type'] == source['type']:
-                                files_to_process.append((filename, video_to_split[v_name], v_name))
+                    # --- ROBUST MATCHING: Check if filename contains any known video name ---
+                    found_video = None
+                    path_parts = filename.split('/')
+                    
+                    # Optimization: Only look for videos belonging to this source type
+                    possible_videos = [v for v in video_source_map if video_source_map[v]['source_type'] == source['type']]
+                    
+                    for v_name in possible_videos:
+                        if v_name in path_parts:
+                            found_video = v_name
+                            break
+                    
+                    if found_video:
+                        files_to_process.append((filename, video_to_split[found_video], found_video))
                 
                 if not files_to_process: continue
                 
-                # Process files
                 for file_path, split, v_name in tqdm(files_to_process, desc=f"Extracting {source['type']}"):
                     try:
                         fname = os.path.basename(file_path)
                         
-                        # Robust Frame Index Logic
-                        if '-' in fname: frame_str = fname.replace('.jpg', '').split('-')[-1]
-                        else: frame_str = fname.replace('.jpg', '') # VisDrone usually just number
-                        
-                        try: frame_idx = int(frame_str) - 1
-                        except: frame_idx = 0
+                        # --- ROBUST INDEX LOGIC: Find last digit sequence ---
+                        digits = re.findall(r'\d+', fname)
+                        if not digits: continue
+                        frame_idx = int(digits[-1]) - 1 
                         
                         if frame_idx % FRAME_STEP != 0: continue 
 
-                        # 1. Cache (Safe Resume)
                         cache_fname = f"{source['type']}_{v_name}_{fname}"
                         cached_file = cache_dir / cache_fname
                         
                         if not cached_file.exists():
                             z.extract(file_path, path=data_dir)
-                            extracted_path = data_dir / file_path
-                            shutil.move(str(extracted_path), str(cached_file))
+                            shutil.move(str(data_dir / file_path), str(cached_file))
                             dl_count += 1
                         else:
                             cache_count += 1
                         
-                        # 2. Organize into Deep Structure (NO SYMLINKS)
-                        # Structure: output/dataset/train/VideoName/img1/00000001.jpg
-                        
-                        # Calculate local index (1-based, sequential for this video)
-                        # Matches logic in save_mot_gt and save_coco
-                        target_local_idx = (frame_idx // FRAME_STEP) + 1
-                        
                         target_dir = out_dir / split / v_name / "img1"
                         target_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        target_name = f"{target_local_idx:08d}.jpg"
-                        target_path = target_dir / target_name
-                        
-                        if not target_path.exists():
-                            shutil.copy2(str(cached_file), str(target_path))
+                        if not (target_dir / f"{(frame_idx // FRAME_STEP) + 1:08d}.jpg").exists():
+                            shutil.copy2(str(cached_file), str(target_dir / f"{(frame_idx // FRAME_STEP) + 1:08d}.jpg"))
 
                     except Exception as e: pass
             
-            if source['type'] == 'bdd' and (data_dir / "bdd100k").exists():
-                shutil.rmtree(data_dir / "bdd100k")
+            # Cleanup extraction debris
+            for debris in ["bdd100k", "train", "val"]:
+                if (data_dir / debris).exists(): shutil.rmtree(data_dir / debris)
                 
         except Exception as e:
             print(f"❌ Error streaming from {source['type']}: {e}")
             if source['type'] == 'bdd': sys.exit(1)
 
     print(f"✅ Images: {dl_count} Downloaded, {cache_count} Cached.")
-
-    # 7. Generate Universal Outputs
-    print("📝 Generating Universal Metadata (COCO + MOT)...")
-    split_datasets = [("train", train_set), ("val", val_set), ("test", test_set)]
-
-    for split, data in split_datasets:
-        if not data: continue
-        
-        # 1. Always generate COCO JSON (Crucial for Training)
-        # This will now point "file_name" to "Video/img1/00000001.jpg"
+    print("📝 Generating Universal Metadata...")
+    for split, data in [("train", train_set), ("val", val_set), ("test", test_set)]:
         save_coco_format(split, data, out_dir)
-        
-        # 2. Always generate MOT GT (Crucial for Evaluation/Tracking)
-        # This puts gt.txt inside the video folders
-        for vid in data:
-            save_mot_gt_file(split, vid, out_dir)
-            
-        # 3. Always generate Seqmap (Crucial for TrackEval)
+        for vid in data: save_mot_gt_file(split, vid, out_dir)
         save_seqmap(split, data, out_dir)
     
-    # Save the human-readable manifest
-    splits_dict = {"train": train_set, "val": val_set, "test": test_set}
-    save_manifest(splits_dict, out_dir)
-    
-    # Dump manifest to console
-    print("-" * 20 + " Manifest " + "-" * 20)
-    with open(out_dir / "manifest.txt", "r") as f:
-        print(f.read())
-    print("-" * 50)
-
+    save_manifest({"train": train_set, "val": val_set, "test": test_set}, out_dir)
+    print("-" * 50); print(open(out_dir / "manifest.txt").read()); print("-" * 50)
     print(f"🚀 Done! Universal Mini-BDD ready at: {out_dir}")
 
 if __name__ == "__main__":
-    try:
-        build_mini_dataset()
-    except KeyboardInterrupt:
-        print("\n🛑 Interrupted. Progress saved in 'data/image_cache'.")
-        sys.exit(0)
+    try: build_mini_dataset()
+    except KeyboardInterrupt: print("\n🛑 Interrupted."); sys.exit(0)

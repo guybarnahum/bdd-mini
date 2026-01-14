@@ -2,7 +2,7 @@
 # Global Settings
 seed = 12
 output_dir = "output/dataset"
-frame_step = 5            # Keep 1 frame every 5 (approx 6 FPS)
+frame_step = 5             # Keep 1 frame every 5 (approx 6 FPS for BDD, 4 FPS for DanceTrack)
 
 # Splits (Must sum to 1.0)
 train_ratio = 0.70
@@ -10,11 +10,11 @@ val_ratio   = 0.15
 test_ratio  = 0.15
 
 # --- SOURCE: BDD100K (Remote Stream) ---
+# Goal: Provides Cars, Trucks, Buses, Riders
 [bdd]
 enabled = true
 num_videos = 10
-
-# Remote access from s3 mirror without download (via RemoteZip opener)
+# S3 Presigned URL generation is handled automatically by the builder if s3:// is used
 images_url = [
     "s3://motip-datasets/bdd-mini-data/images20-track-train-1.zip",
     "s3://motip-datasets/bdd-mini-data/images20-track-train-2.zip",
@@ -54,9 +54,21 @@ labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
 #    "data/images20-track-val-1.zip"
 # ]
 
-# --- SOURCE: VisDrone (Local Zip) ---
+# --- SOURCE: DanceTrack (Remote Stream) ---
+# Goal: Provides robust tracking of People/Pedestrians in complex motion
+[dancetrack]
+enabled = true
+num_videos = 10
+images_url = [
+    "s3://motip-datasets/dancetrack-dataset/train1.zip",
+    "s3://motip-datasets/dancetrack-dataset/train2.zip",
+    "s3://motip-datasets/dancetrack-dataset/val.zip"
+]
+
+# --- SOURCE: VisDrone (Local Zip, s3 mirror does not work) ---
+# Goal: Provides small objects and aerial view perspectives
 [visdrone]
-enabled = false  # Set to true after downloading VisDrone zips
+enabled = false
 num_videos = 10
 images_zip = "data/VisDrone2019-MOT-train.zip"
-labels_zip = "data/VisDrone2019-MOT-train.zip"
+labels_zip = "data/VisDrone2019-MOT-train.zip" # Assuming combined zip

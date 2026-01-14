@@ -4,9 +4,18 @@ import random
 import subprocess
 import argparse
 import sys
+import shutil  # Added for ffmpeg check
 from pathlib import Path
+from tqdm import tqdm # Added for better progress bars
 
 FFMPEG_BIN = "ffmpeg"
+
+def check_ffmpeg():
+    """Checks if FFMPEG is installed and accessible."""
+    if shutil.which(FFMPEG_BIN) is None:
+        print(f"❌ Error: '{FFMPEG_BIN}' not found in PATH.")
+        print("   Please install FFmpeg: 'sudo apt install ffmpeg' or 'brew install ffmpeg'")
+        sys.exit(1)
 
 def get_color(idx):
     random.seed(idx)
@@ -25,6 +34,7 @@ def load_from_coco(split, output_dir):
         print(f"❌ Annotations not found: {json_path}")
         return None
     
+    print(f"📖 Parsing COCO JSON: {json_path}...")
     with open(json_path, 'r') as f:
         data = json.load(f)
         
@@ -50,9 +60,8 @@ def load_from_coco(split, output_dir):
             x, y, w, h = a['bbox']
             parsed_anns.append((x, y, w, h, a['track_id']))
         
-        # FIX: Construct full path from Deep Structure
-        # JSON file_name is "Video/img1/00000001.jpg"
-        # We prepend output_dir/split/
+        # Construct full path from Deep Structure
+        # Builder saves file_name as "VideoName/img1/000001.jpg"
         full_path = Path(output_dir) / split / img['file_name']
             
         video_content[vid_name].append({
@@ -63,18 +72,18 @@ def load_from_coco(split, output_dir):
     return video_content
 
 def load_from_mot(split, output_dir):
-    # FIX: Root is now the split folder itself containing video subfolders
     split_root = Path(output_dir) / split
     if not split_root.exists(): return None
     
     video_content = {}
+    print(f"📂 Scanning MOT folders in: {split_root}")
     
-    # Iterate over video folders in the split directory
+    # Iterate over video folders
     for vid_dir in split_root.iterdir():
         if not vid_dir.is_dir(): continue
         vid_name = vid_dir.name
         
-        # Check for Deep MOT structure: gt/gt.txt and img1/
+        # Check for Deep MOT structure
         gt_path = vid_dir / "gt" / "gt.txt"
         img_dir = vid_dir / "img1"
         
@@ -86,21 +95,27 @@ def load_from_mot(split, output_dir):
             for line in f:
                 parts = line.strip().split(',')
                 # MOT Format: frame, id, x, y, w, h, ...
-                f_idx = int(parts[0])
-                tid = int(parts[1])
-                bbox = (float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5]))
+                try:
+                    f_idx = int(parts[0])
+                    tid = int(parts[1])
+                    bbox = (float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5]))
+                    
+                    if f_idx not in frame_data: frame_data[f_idx] = []
+                    frame_data[f_idx].append((bbox[0], bbox[1], bbox[2], bbox[3], tid))
+                except ValueError: continue
                 
-                if f_idx not in frame_data: frame_data[f_idx] = []
-                frame_data[f_idx].append((bbox[0], bbox[1], bbox[2], bbox[3], tid))
-                
-        # 2. Get Images (Sorted numerically from img1 folder)
+        # 2. Get Images (Sorted numerically)
         all_files = sorted(list(img_dir.glob("*.jpg")))
         
         frames_list = []
         for i, img_path in enumerate(all_files):
-            # Map filename '00000001.jpg' -> int(1) to match GT
+            # Attempt to derive exact frame index from filename "000001.jpg" -> 1
+            # Fallback to list index if filename is non-numeric
             try:
-                gt_frame_idx = int(img_path.stem)
+                # Extract digits only to handle "img-001.jpg" formats if they exist
+                import re
+                digits = re.findall(r'\d+', img_path.stem)
+                gt_frame_idx = int(digits[-1]) if digits else (i + 1)
             except:
                 gt_frame_idx = i + 1 
             
@@ -116,13 +131,13 @@ def load_from_mot(split, output_dir):
 
 # --- RENDERER ---
 def render_video(fmt, split, data_dir, specific_video=None):
-    # Removed old img_root logic; we now trust the loaders to provide full paths
+    check_ffmpeg()
     
     # User requested: output/rendered
     movie_out_dir = Path("output/rendered")
     movie_out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"📂 Loading data from {fmt.upper()} format in {data_dir}...")
+    print(f"🚀 Initializing Renderer ({fmt.upper()}) for split: {split}")
     
     if fmt == "coco":
         content = load_from_coco(split, data_dir)
@@ -130,14 +145,14 @@ def render_video(fmt, split, data_dir, specific_video=None):
         content = load_from_mot(split, data_dir)
         
     if not content:
-        print(f"❌ Could not load data for {fmt}. Check if files exist.")
+        print(f"❌ Could not load data. Check paths.")
         return
 
     # Select Video
     if specific_video:
         target_vid = specific_video
         if target_vid not in content:
-            print(f"❌ Video '{target_vid}' not found in {list(content.keys())[:3]}...")
+            print(f"❌ Video '{target_vid}' not found. Available: {list(content.keys())[:5]}...")
             return
     else:
         target_vid = random.choice(list(content.keys()))
@@ -147,33 +162,29 @@ def render_video(fmt, split, data_dir, specific_video=None):
     frames.sort(key=lambda x: x['file_name'])
     
     if not frames:
-        print("❌ No frames found.")
+        print("❌ No frames found in video.")
         return
 
-    # Setup FFmpeg
-    # FIX: Use the full path provided by loader
+    # Setup FFmpeg Dimensions
     first_path = Path(frames[0]['file_name'])
     if not first_path.exists():
-        print(f"❌ Image missing: {first_path}")
+        print(f"❌ First image missing: {first_path}")
         return
         
     sample = cv2.imread(str(first_path))
     h, w = sample.shape[:2]
     
-    # --- FIX: Ensure dimensions are even for libx264 ---
-    if w % 2 != 0: w -= 1
-    if h % 2 != 0: h -= 1
-    # --------------------------------------------------
+    # Ensure dimensions are even for libx264
+    target_w = w if w % 2 == 0 else w - 1
+    target_h = h if h % 2 == 0 else h - 1
     
-    # Save as: output/rendered/VideoName_format.mp4
     out_file = movie_out_dir / f"{target_vid}_{fmt}.mp4"
     
-    # FFmpeg command
     command = [
         FFMPEG_BIN, '-y', 
         '-f', 'rawvideo', 
         '-vcodec', 'rawvideo',
-        '-s', f'{w}x{h}', 
+        '-s', f'{target_w}x{target_h}', 
         '-pix_fmt', 'bgr24', 
         '-r', '10',  # 10 fps playback
         '-i', '-', 
@@ -183,38 +194,43 @@ def render_video(fmt, split, data_dir, specific_video=None):
         str(out_file)
     ]
 
-    print(f"🎬 Rendering {len(frames)} frames to {out_file}...")
+    print(f"🎬 Rendering {len(frames)} frames to: {out_file}")
+    
+    proc = None
     try:
-        # Changed stderr to None to expose FFmpeg errors if they happen
-        proc = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=None)
+        proc = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         
-        for i, frame_info in enumerate(frames):
-            # FIX: Load image using the absolute path
+        # Use TQDM for progress bar
+        for frame_info in tqdm(frames, unit="frame"):
             img = cv2.imread(frame_info['file_name'])
             if img is None: continue
             
-            # --- FIX: Resize image if it doesn't match the forced even dimensions ---
-            if img.shape[1] != w or img.shape[0] != h:
-                img = cv2.resize(img, (w, h))
-            # ----------------------------------------------------------------------
+            # Force resize if dimensions don't match target (Prevents FFmpeg crash)
+            if img.shape[1] != target_w or img.shape[0] != target_h:
+                img = cv2.resize(img, (target_w, target_h))
             
             # Draw Boxes
             for x, y, bw, bh, tid in frame_info['anns']:
                 color = get_color(tid)
                 cv2.rectangle(img, (int(x), int(y)), (int(x+bw), int(y+bh)), color, 2)
-                cv2.putText(img, str(tid), (int(x), int(y)-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                
+                # Draw label background for readability
+                label = str(tid)
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(img, (int(x), int(y)-20), (int(x)+tw, int(y)), color, -1)
+                cv2.putText(img, label, (int(x), int(y)-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
             
-            draw_hud(img, i, target_vid, fmt)
+            draw_hud(img, frames.index(frame_info), target_vid, fmt)
             
-            # Write to pipe
             proc.stdin.write(img.tobytes())
-            
-            if i % 10 == 0: sys.stdout.write(".")
-            sys.stdout.flush()
             
         proc.stdin.close()
         proc.wait()
-        print(f"\n✅ Done!")
+        print(f"✅ Render Complete!")
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Interrupted.")
+        if proc: proc.kill()
     except Exception as e:
         print(f"\n❌ FFmpeg Error: {e}")
         if proc: proc.kill()

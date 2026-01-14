@@ -13,7 +13,10 @@ test_ratio  = 0.15
 # Goal: Provides Cars, Trucks, Buses, Riders
 [bdd]
 enabled = true
-num_videos = 10
+# Replaced 'num_videos' with 'frame_budget' for balanced training
+# 5000 frames / frame_step(5) = ~1000 actual training samples
+frame_budget = 5000 
+
 # S3 Presigned URL generation is handled automatically by the builder if s3:// is used
 images_url = [
     "s3://motip-datasets/bdd-mini-data/images20-track-train-1.zip",
@@ -58,7 +61,7 @@ labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
 # Goal: Provides robust tracking of People/Pedestrians in complex motion
 [dancetrack]
 enabled = true
-num_videos = 10
+frame_budget = 5000 
 images_url = [
     "s3://motip-datasets/dancetrack-dataset/train1.zip",
     "s3://motip-datasets/dancetrack-dataset/train2.zip",
@@ -69,6 +72,6 @@ images_url = [
 # Goal: Provides small objects and aerial view perspectives
 [visdrone]
 enabled = false
-num_videos = 10
+frame_budget = 5000
 images_zip = "data/VisDrone2019-MOT-train.zip"
 labels_zip = "data/VisDrone2019-MOT-train.zip" # Assuming combined zip

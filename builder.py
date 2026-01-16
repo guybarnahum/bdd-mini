@@ -485,6 +485,9 @@ def build_mini_dataset():
         for vid in data: save_mot_gt_file(split, vid, out_dir)
         save_seqmap(split, data, out_dir)
     
+    print(f"📄 Archiving {CONFIG_FILE} to dataset root...")
+    shutil.copy2(CONFIG_FILE, out_dir / CONFIG_FILE)
+    
     save_manifest({"train": train_set, "val": val_set, "test": test_set}, out_dir)
     print("-" * 50); print(open(out_dir / "manifest.txt").read()); print("-" * 50)
     print(f"🚀 Done! Universal Mini-BDD ready at: {out_dir}")

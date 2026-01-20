@@ -45,8 +45,7 @@ def check_aws_credentials():
     """Verifies that AWS credentials are present and valid."""
     session = boto3.Session()
     credentials = session.get_credentials()
-    
-    if not credentials:
+    if not session.get_credentials():
         print("\n❌ CRITICAL: No AWS Credentials found!")
         print("   👉 Run 'aws configure' or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY in .env")
         return False
@@ -63,7 +62,7 @@ def check_aws_credentials():
         return False
     except Exception as e:
         print(f"   ⚠️  Warning: Could not verify AWS identity: {e}")
-        return True # Proceed with caution
+        return True
 
 def get_s3_url(url):
     """Converts s3:// to a presigned URL if needed."""
@@ -75,6 +74,31 @@ def get_s3_url(url):
     except Exception as e:
         print(f"   ❌ S3 Generation Error: {e}")
         return None
+
+def scan_bdd_labels(cfg):
+    if not cfg.get('enabled', False): return []
+    
+    url = cfg.get('labels_url')
+    if not url: return []
+    
+    print("🔍 Scanning BDD Labels...")
+    video_set = set()
+    signed_url = get_s3_url(url)
+    
+    if not signed_url: return []
+
+    try:
+        with RemoteZip(signed_url) as z:
+            files = z.namelist()
+            for f in tqdm(files, desc="BDD Labels"):
+                if f.endswith(".json"):
+                    video_name = os.path.basename(f).replace('.json', '')
+                    if len(video_name) > 5: 
+                        video_set.add(video_name)
+    except Exception as e:
+        print(f"   ⚠️  Error reading BDD Labels: {e}")
+        
+    return sorted(list(video_set))
 
 def scan_zip_source(source_name, urls):
     """Generic scanner for remote zips."""
@@ -101,10 +125,8 @@ def scan_zip_source(source_name, urls):
                         if idx > 0:
                             video_set.add(parts[idx-1])
         except RemoteIOError as e:
-            # Handle specific HTTP errors (like 403 Forbidden)
             if "403" in str(e):
                 pbar.write(f"   ❌ ACCESS DENIED (403) for {url}")
-                pbar.write("      👉 Check if your IP is whitelisted or keys have access to this bucket.")
                 errors += 1
             else:
                 pbar.write(f"   ⚠️  Read Error {url}: {e}")
@@ -169,10 +191,8 @@ def main():
     
     # BDD
     if cfg.get('bdd', {}).get('enabled', False):
-        print("\n🔍 Scanning BDD sources...")
-        res = scan_zip_source("BDD", cfg['bdd']['images_url'])
-        if res is None: sys.exit(1) # Fail fast
-        videos["bdd"] = res
+        res = scan_bdd_labels(cfg['bdd'])
+        if res: videos["bdd"] = res
 
     # DanceTrack
     if cfg.get('dancetrack', {}).get('enabled', False):

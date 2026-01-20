@@ -32,7 +32,6 @@ LOCK_COUNTS = {
 # --- HELPERS ---
 
 def load_env_file():
-    """Manually loads .env file if present to support local dev."""
     if os.path.exists(ENV_FILE):
         print(f"ℹ️  Loading environment variables from {ENV_FILE}...")
         with open(ENV_FILE, 'r') as f:
@@ -44,7 +43,6 @@ def load_env_file():
 def check_aws_credentials():
     """Verifies that AWS credentials are present and valid."""
     session = boto3.Session()
-    credentials = session.get_credentials()
     if not session.get_credentials():
         print("\n❌ CRITICAL: No AWS Credentials found!")
         print("   👉 Run 'aws configure' or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY in .env")

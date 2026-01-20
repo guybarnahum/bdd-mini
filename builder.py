@@ -32,6 +32,7 @@ except ImportError:
 
 # --- CONFIGURATION ---
 CONFIG_FILE = "config.toml"
+MANIFEST_FILE = "manifest.json"
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -40,7 +41,15 @@ def load_config():
     with open(CONFIG_FILE, "rb") as f:
         return toml.load(f)
 
+def load_manifest():
+    if not os.path.exists(MANIFEST_FILE):
+        print(f"❌ Manifest file '{MANIFEST_FILE}' not found. Run 'python manifest.py' first.")
+        sys.exit(1)
+    with open(MANIFEST_FILE, "r") as f:
+        return json.load(f)
+
 cfg = load_config()
+manifest_data = load_manifest()
 
 # --- GLOBAL CLASS MAPPINGS ---
 UNIFIED_CLASS_MAP = {
@@ -64,9 +73,15 @@ DANCETRACK_RAW_MAP = { 1: "pedestrian" }
 SEED = cfg['dataset']['seed']
 OUTPUT_DIR = Path(cfg['dataset']['output_dir'])
 FRAME_STEP = cfg['dataset'].get('frame_step', 5)
-TRAIN_RATIO = cfg['dataset'].get('train_ratio', 0.70)
-VAL_RATIO   = cfg['dataset'].get('val_ratio', 0.15)
-TEST_RATIO  = cfg['dataset'].get('test_ratio', 0.15)
+TRAIN_BUDGET = cfg['dataset'].get('train_frame_budget', 5000)
+
+# Build Lookup Sets for Manifest
+# Format: { "video_name": "val" } or { "video_name": "test" }
+LOCKED_VIDEOS = {}
+for entry in manifest_data.get('val', []):
+    LOCKED_VIDEOS[entry['name']] = 'val'
+for entry in manifest_data.get('test', []):
+    LOCKED_VIDEOS[entry['name']] = 'test'
 
 # --- HELPER FUNCTIONS ---
 
@@ -102,74 +117,63 @@ def download_file(url, dest_path):
 def check_budget(current_frames, target_budget):
     return current_frames < target_budget
 
-# --- SELECTION STRATEGIES (Refactored) ---
+# --- SELECTION STRATEGIES (Manifest Aware) ---
 
 def select_bdd_videos(bdd_cfg, labels_zip):
     if not bdd_cfg.get('enabled', False): return []
     
-    budget = bdd_cfg.get('frame_budget', 2000)
-    collected_frames = 0
+    # We collect ALL valid videos first, then split later
     selected_videos = []
 
-    print(f"⚖️  Selecting BDD videos (Budget: {budget} frames)...")
+    print(f"⚖️  Scanning BDD videos...")
     
     with zipfile.ZipFile(labels_zip, 'r') as z_lbl:
         all_json = sorted([f for f in z_lbl.namelist() if f.endswith(".json") and "train" in f])
-        random.seed(SEED)
-        random.shuffle(all_json)
         
-        pbar = tqdm(total=budget, desc="BDD Selection", unit="fr")
+        # We process ALL json files to find our manifest targets + candidates
+        pbar = tqdm(total=len(all_json), desc="BDD Scan", unit="file")
         
         for f in all_json:
-            if not check_budget(collected_frames, budget): break
-            
             content = z_lbl.read(f)
             raw_data = json.loads(content)
-            if not raw_data or not isinstance(raw_data[0], dict): continue
-            
-            # Calculate effective frames
-            effective_len = len([x for i, x in enumerate(raw_data) if i % FRAME_STEP == 0])
+            if not raw_data or not isinstance(raw_data[0], dict): 
+                pbar.update(1); continue
             
             v_name = raw_data[0].get('videoName', os.path.basename(f).replace('.json', ''))
+            
+            # Determine Frame Step based on split
+            # Test = Full FPS (step=1), Val/Train = Reduced FPS (step=FRAME_STEP)
+            split = LOCKED_VIDEOS.get(v_name, 'train')
+            step = 1 if split == 'test' else FRAME_STEP
             
             selected_videos.append({
                 "name": v_name, 
                 "frames": raw_data, 
-                "source_type": "bdd"
+                "source_type": "bdd",
+                "split": split,
+                "step": step
             })
-            
-            collected_frames += effective_len
-            pbar.update(effective_len)
+            pbar.update(1)
         pbar.close()
         
-    print(f"   ✅ BDD: {len(selected_videos)} videos selected ({collected_frames} frames)")
+    print(f"   ✅ BDD: Found {len(selected_videos)} total videos")
     return selected_videos
 
 def select_dancetrack_videos(dt_cfg):
     if not dt_cfg.get('enabled', False): return []
 
-    budget = dt_cfg.get('frame_budget', 2000)
-    collected_frames = 0
     selected_videos = []
-    
     dt_urls = dt_cfg['images_url'] if isinstance(dt_cfg['images_url'], list) else [dt_cfg['images_url']]
     
-    print(f"⚖️  Selecting DanceTrack videos (Budget: {budget} frames)...")
-    pbar = tqdm(total=budget, desc="DT Selection", unit="fr")
-
+    print(f"⚖️  Scanning DanceTrack videos...")
+    
     for zip_url in dt_urls:
-        if not check_budget(collected_frames, budget): break
-        
         actual_url = get_s3_presigned_url(zip_url) if zip_url.startswith("s3://") else zip_url
         try:
             with RemoteZip(actual_url) as z_dt:
                 seq_gt_files = [f for f in z_dt.namelist() if f.endswith('gt/gt.txt')]
-                random.seed(SEED)
-                random.shuffle(seq_gt_files)
                 
-                for gt_f in seq_gt_files:
-                    if not check_budget(collected_frames, budget): break
-                    
+                for gt_f in tqdm(seq_gt_files, desc="DT Scan"):
                     lines = z_dt.read(gt_f).decode('utf-8').strip().split('\n')
                     
                     max_frame = 0
@@ -196,48 +200,39 @@ def select_dancetrack_videos(dt_cfg):
                     
                     if not valid_seq: continue
 
-                    effective_len = len([i for i in range(1, max_frame+1) if (i-1) % FRAME_STEP == 0])
                     seq_name = gt_f.split('/')[-3] if len(gt_f.split('/')) > 2 else "unknown"
+                    
+                    split = LOCKED_VIDEOS.get(seq_name, 'train')
+                    step = 1 if split == 'test' else FRAME_STEP
                     
                     selected_videos.append({
                         "name": seq_name,
                         "frames": [{"frameIndex": i-1, "videoName": seq_name, "labels": frame_dict.get(i, [])} for i in range(1, max_frame+1)],
                         "source_type": "dancetrack",
-                        "zip_url": zip_url
+                        "zip_url": zip_url,
+                        "split": split,
+                        "step": step
                     })
-                    
-                    collected_frames += effective_len
-                    pbar.update(effective_len)
         except Exception as e: 
             print(f"⚠️  Skipping DT Zip {zip_url}: {e}")
             
-    pbar.close()
-    print(f"   ✅ DanceTrack: {len(selected_videos)} videos selected ({collected_frames} frames)")
+    print(f"   ✅ DanceTrack: Found {len(selected_videos)} total videos")
     return selected_videos
 
 def select_visdrone_videos(vis_cfg):
     if not vis_cfg.get('enabled', False): return []
     
-    budget = vis_cfg.get('frame_budget', 2000)
-    collected_frames = 0
     selected_videos = []
-    
     lbl_zip_path = Path(vis_cfg.get('labels_zip', ''))
     if not lbl_zip_path.exists(): 
         print("❌ VisDrone enabled but zip missing"); sys.exit(1)
 
-    print(f"⚖️  Selecting VisDrone videos (Budget: {budget} frames)...")
+    print(f"⚖️  Scanning VisDrone videos...")
     
     with zipfile.ZipFile(lbl_zip_path, 'r') as z_vis:
         txt_files = sorted([f for f in z_vis.namelist() if f.endswith(".txt") and "__MACOSX" not in f])
-        random.seed(SEED)
-        random.shuffle(txt_files)
         
-        pbar = tqdm(total=budget, desc="VisDrone Selection", unit="fr")
-        
-        for f in txt_files:
-            if not check_budget(collected_frames, budget): break
-
+        for f in tqdm(txt_files, desc="VisDrone Scan"):
             lines = z_vis.read(f).decode('utf-8').strip().split('\n')
             max_f = 0
             frame_dict = {}
@@ -263,23 +258,23 @@ def select_visdrone_videos(vis_cfg):
             
             if not valid: continue
             
-            effective_len = len([i for i in range(1, max_f+1) if (i-1) % FRAME_STEP == 0])
             seq_name = Path(f).stem
+            
+            split = LOCKED_VIDEOS.get(seq_name, 'train')
+            step = 1 if split == 'test' else FRAME_STEP
             
             selected_videos.append({
                 "name": seq_name,
                 "frames": [{"frameIndex": i-1, "videoName": seq_name, "labels": frame_dict.get(i, [])} for i in range(1, max_f+1)],
-                "source_type": "visdrone"
+                "source_type": "visdrone",
+                "split": split,
+                "step": step
             })
-            
-            collected_frames += effective_len
-            pbar.update(effective_len)
-        pbar.close()
 
-    print(f"   ✅ VisDrone: {len(selected_videos)} videos selected ({collected_frames} frames)")
+    print(f"   ✅ VisDrone: Found {len(selected_videos)} total videos")
     return selected_videos
 
-# --- EXPORTERS (Shortened for brevity, logic identical) ---
+# --- EXPORTERS ---
 
 def save_coco_format(split_name, video_data, output_root):
     anno_dir = output_root / "annotations"
@@ -292,10 +287,13 @@ def save_coco_format(split_name, video_data, output_root):
 
     for video_idx, vid_data in enumerate(video_data):
         video_name = vid_data['name']
+        current_step = vid_data['step'] # Use video-specific step (1 or 5)
+        
         coco["videos"].append({"id": video_idx + 1, "file_name": video_name})
         
         frames = sorted(vid_data['frames'], key=lambda x: x.get('frameIndex', 0))
-        valid_frames = [f for f in frames if f.get('frameIndex', 0) % FRAME_STEP == 0]
+        # Filter logic using dynamic step
+        valid_frames = [f for f in frames if f.get('frameIndex', 0) % current_step == 0]
         
         for local_idx, frame_data in enumerate(valid_frames, start=1):
             coco["images"].append({
@@ -324,11 +322,13 @@ def save_coco_format(split_name, video_data, output_root):
 
 def save_mot_gt_file(split_name, vid_data, output_root):
     v_name = vid_data['name']
+    current_step = vid_data['step']
+    
     seq_dir = output_root / split_name / v_name
     gt_dir = seq_dir / "gt"; gt_dir.mkdir(parents=True, exist_ok=True)
     
     frames = sorted(vid_data['frames'], key=lambda x: x.get('frameIndex', 0))
-    valid_frames = [f for f in frames if f.get('frameIndex', 0) % FRAME_STEP == 0]
+    valid_frames = [f for f in frames if f.get('frameIndex', 0) % current_step == 0]
     
     with open(gt_dir / "gt.txt", 'w') as f_gt:
         for local_frame_idx, frame_data in enumerate(valid_frames, start=1):
@@ -341,7 +341,7 @@ def save_mot_gt_file(split_name, vid_data, output_root):
                     w, h = obj['box2d']['x2'] - x1, obj['box2d']['y2'] - y1
                     f_gt.write(f"{local_frame_idx},{t_id_int},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},1,{cls_id},1\n")
     with open(seq_dir / "seqinfo.ini", 'w') as f_ini:
-        f_ini.write(f"[Sequence]\nname={v_name}\nimDir=img1\nframeRate={30/FRAME_STEP}\nseqLength={len(valid_frames)}\nimWidth=1280\nimHeight=720\nimExt=.jpg\n")
+        f_ini.write(f"[Sequence]\nname={v_name}\nimDir=img1\nframeRate={30/current_step}\nseqLength={len(valid_frames)}\nimWidth=1280\nimHeight=720\nimExt=.jpg\n")
 
 def save_seqmap(split_name, video_data, output_root):
     if not video_data: return
@@ -351,26 +351,24 @@ def save_seqmap(split_name, video_data, output_root):
         f.write("name\n")
         for v in sorted(video_data, key=lambda x: x['name']): f.write(f"{v['name']}\n")
 
-def save_manifest(splits, output_root):
-    with open(output_root / "manifest.txt", 'w') as f:
-        f.write(f"BDD-Mini Build Manifest\n=======================\n\n")
+def save_manifest_log(splits, output_root):
+    with open(output_root / "manifest_log.txt", 'w') as f:
+        f.write(f"BDD-Mini Build Log (Manifest Aware)\n===================================\n\n")
         for split_name, video_list in splits.items():
             if not video_list: continue
             f.write(f"[{split_name.upper()}] - {len(video_list)} videos\n" + "-" * 40 + "\n")
             for v in sorted(video_list, key=lambda x: x['name']):
-                f.write(f"{v.get('source_type', 'unknown').ljust(10)} | {v['name'].ljust(30)} | {len(v.get('frames', []))} frames\n")
+                step_info = "FULL" if v['step'] == 1 else "SKIP-5"
+                f.write(f"{v.get('source_type', 'unknown').ljust(10)} | {v['name'].ljust(30)} | {step_info} | {len(v.get('frames', []))} raw frames\n")
             f.write("\n")
 
 # --- MAIN BUILDER ---
 
 def build_mini_dataset():
-    if abs((TRAIN_RATIO + VAL_RATIO + TEST_RATIO) - 1.0) > 0.001:
-        print(f"⚠️ Warning: Ratios sum to {(TRAIN_RATIO + VAL_RATIO + TEST_RATIO):.2f}, not 1.0.")
-
     data_dir = Path("data"); data_dir.mkdir(exist_ok=True)
     cache_dir = data_dir / "image_cache"; cache_dir.mkdir(exist_ok=True)
     out_dir = OUTPUT_DIR
-    print(f"⚙️  Config: Seed {SEED} | Step: {FRAME_STEP}")
+    print(f"⚙️  Config: Seed {SEED} | Budget: {TRAIN_BUDGET} Frames | Manifest: {MANIFEST_FILE}")
 
     # 1. Prepare BDD Labels if needed
     labels_zip = None
@@ -379,29 +377,54 @@ def build_mini_dataset():
         labels_zip = data_dir / (labels_url.split("/")[-1] if labels_url.startswith("s3://") else os.path.basename(labels_url))
         download_file(labels_url, labels_zip)
 
-    # 2. Select Videos (Using new helper functions)
-    parsed_videos = []
-    parsed_videos.extend(select_bdd_videos(cfg.get('bdd', {}), labels_zip))
-    parsed_videos.extend(select_dancetrack_videos(cfg.get('dancetrack', {})))
-    parsed_videos.extend(select_visdrone_videos(cfg.get('visdrone', {})))
+    # 2. Select All Candidates
+    all_videos = []
+    all_videos.extend(select_bdd_videos(cfg.get('bdd', {}), labels_zip))
+    all_videos.extend(select_dancetrack_videos(cfg.get('dancetrack', {})))
+    all_videos.extend(select_visdrone_videos(cfg.get('visdrone', {})))
 
-    if not parsed_videos: print("\n❌ No videos selected!"); sys.exit(1)
+    if not all_videos: print("\n❌ No videos selected!"); sys.exit(1)
     
-    # 3. Apply Splits
-    random.shuffle(parsed_videos)
-    n_train = int(len(parsed_videos) * TRAIN_RATIO)
-    n_val = int(len(parsed_videos) * VAL_RATIO)
-    train_set, val_set, test_set = parsed_videos[:n_train], parsed_videos[n_train:n_train+n_val], parsed_videos[n_train+n_val:]
+    # 3. Apply Manifest Split Logic
+    train_set, val_set, test_set = [], [], []
+    train_pool = []
+
+    # Bin videos by manifest instructions
+    for v in all_videos:
+        if v['split'] == 'val':
+            val_set.append(v)
+        elif v['split'] == 'test':
+            test_set.append(v)
+        else:
+            train_pool.append(v)
+
+    # 4. Fill Training Budget from Pool
+    random.seed(SEED)
+    random.shuffle(train_pool)
     
+    collected_frames = 0
+    for v in train_pool:
+        if collected_frames >= TRAIN_BUDGET: break
+        
+        # Calculate effective frames (Train always uses FRAME_STEP)
+        raw_len = len(v['frames'])
+        effective_len = len([x for i, x in enumerate(v['frames']) if i % FRAME_STEP == 0])
+        
+        train_set.append(v)
+        collected_frames += effective_len
+
     video_to_split = {v['name']: s for s, lst in [("train", train_set), ("val", val_set), ("test", test_set)] for v in lst}
-    video_source_map = {v['name']: v for v in parsed_videos}
-    print(f"📊 Final Split: {len(train_set)} Train, {len(val_set)} Val, {len(test_set)} Test")
+    video_source_map = {v['name']: v for v in all_videos}
+    
+    print(f"📊 Final Distribution:")
+    print(f"   Train: {len(train_set)} videos ({collected_frames} frames) [Budgeted]")
+    print(f"   Val:   {len(val_set)} videos [Fixed]")
+    print(f"   Test:  {len(test_set)} videos [Fixed, Full FPS]")
 
-    # 4. Stream Images
+    # 5. Stream Images
     print(f"☁️  Streaming Frames to Universal MOT Structure...")
     download_queue = []
     
-    # Collect Source URLS
     if cfg.get('bdd', {}).get('enabled', False):
         urls = cfg['bdd']['images_url'] if isinstance(cfg['bdd']['images_url'], list) else [cfg['bdd']['images_url']]
         for p in urls:
@@ -417,8 +440,11 @@ def build_mini_dataset():
             url = get_s3_presigned_url(p) if p.startswith("s3://") else p
             if url: download_queue.append({"type": "dancetrack", "opener": RemoteZip, "path": url})
 
-    # Process Download Queue
     dl_count, cache_count = 0, 0
+    
+    # Pre-calculate active video set to skip unnecessary downloads
+    active_video_names = set(v['name'] for v in train_set + val_set + test_set)
+
     for source in download_queue:
         try:
             if source['type'] == 'visdrone' and not Path(source['path']).exists(): continue
@@ -426,7 +452,6 @@ def build_mini_dataset():
                 all_files = z.namelist()
                 files_to_process = []
                 
-                # Check for files belonging to selected videos
                 possible_videos = [v for v in video_source_map if video_source_map[v]['source_type'] == source['type']]
                 
                 for filename in all_files:
@@ -439,7 +464,8 @@ def build_mini_dataset():
                             found_video = v_name
                             break
                     
-                    if found_video:
+                    # Only process if video is in our final selection
+                    if found_video and found_video in active_video_names:
                         files_to_process.append((filename, video_to_split[found_video], found_video))
                 
                 if not files_to_process: continue
@@ -451,7 +477,9 @@ def build_mini_dataset():
                         if not digits: continue
                         frame_idx = int(digits[-1]) - 1 
                         
-                        if frame_idx % FRAME_STEP != 0: continue 
+                        # Use video-specific step (1 for Test, 5 for others)
+                        current_step = video_source_map[v_name]['step']
+                        if frame_idx % current_step != 0: continue 
 
                         cache_fname = f"{source['type']}_{v_name}_{fname}"
                         cached_file = cache_dir / cache_fname
@@ -465,7 +493,7 @@ def build_mini_dataset():
                         
                         target_dir = out_dir / split / v_name / "img1"
                         target_dir.mkdir(parents=True, exist_ok=True)
-                        tgt = target_dir / f"{(frame_idx // FRAME_STEP) + 1:08d}.jpg"
+                        tgt = target_dir / f"{(frame_idx // current_step) + 1:08d}.jpg"
                         if not tgt.exists(): shutil.copy2(str(cached_file), str(tgt))
 
                     except Exception: pass
@@ -485,11 +513,11 @@ def build_mini_dataset():
         for vid in data: save_mot_gt_file(split, vid, out_dir)
         save_seqmap(split, data, out_dir)
     
-    print(f"📄 Archiving {CONFIG_FILE} to dataset root...")
+    print(f"📄 Archiving {CONFIG_FILE} and Manifest...")
     shutil.copy2(CONFIG_FILE, out_dir / CONFIG_FILE)
+    shutil.copy2(MANIFEST_FILE, out_dir / MANIFEST_FILE)
     
-    save_manifest({"train": train_set, "val": val_set, "test": test_set}, out_dir)
-    print("-" * 50); print(open(out_dir / "manifest.txt").read()); print("-" * 50)
+    save_manifest_log({"train": train_set, "val": val_set, "test": test_set}, out_dir)
     print(f"🚀 Done! Universal Mini-BDD ready at: {out_dir}")
 
 if __name__ == "__main__":

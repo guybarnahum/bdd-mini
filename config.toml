@@ -4,15 +4,12 @@ seed = 12
 output_dir = "output/dataset"
 frame_step = 5  # Keep 1 frame every 5 (approx 6 FPS for BDD, 4 FPS for DanceTrack)
 
-# Budgeting (Replaces Ratios)
-# Val and Test are fixed by manifest.json. This limits the size of the Training set.
-# Previous equivalent: 70% of ~10k frames = 7000
-train_frame_budget = 7000   
-
 # --- SOURCE: BDD100K (Remote Stream) ---
 # Goal: Provides Cars, Trucks, Buses, Riders
 [bdd]
 enabled = true
+frame_budget = 5000  # FORCE 50%
+
 # S3 Presigned URL generation is handled automatically by the builder if s3:// is used
 images_url = [
     "s3://motip-datasets/bdd-mini-data/images20-track-train-1.zip",
@@ -57,6 +54,7 @@ labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
 # Goal: Provides robust tracking of People/Pedestrians in complex motion
 [dancetrack]
 enabled = true
+frame_budget = 5000  
 images_url = [
     "s3://motip-datasets/dancetrack-dataset/train1.zip",
     "s3://motip-datasets/dancetrack-dataset/train2.zip",
@@ -67,5 +65,6 @@ images_url = [
 # Goal: Provides small objects and aerial view perspectives
 [visdrone]
 enabled = false
+frame_budget = 0 
 images_zip = "data/VisDrone2019-MOT-train.zip"
 labels_zip = "data/VisDrone2019-MOT-train.zip" # Assuming combined zip

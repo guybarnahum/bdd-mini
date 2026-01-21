@@ -398,20 +398,51 @@ def build_mini_dataset():
         else:
             train_pool.append(v)
 
-    # 4. Fill Training Budget from Pool
+    # 4. Fill Training Budget from Pool (Source-Aware)
     random.seed(SEED)
-    random.shuffle(train_pool)
     
-    collected_frames = 0
+    # Group training candidates by source
+    train_candidates = {}
     for v in train_pool:
-        if collected_frames >= TRAIN_BUDGET: break
+        src = v.get('source_type', 'unknown')
+        train_candidates.setdefault(src, []).append(v)
+
+    global_budget = cfg['dataset'].get('train_frame_budget', None)
+    collected_frames = 0
+    added_video_names = set()
+    
+    # A. Process Source-Specific Budgets First
+    for source_name, candidates in train_candidates.items():
+        source_cfg = cfg.get(source_name, {})
+        specific_budget = source_cfg.get('frame_budget', None)
         
-        # Calculate effective frames (Train always uses FRAME_STEP)
-        raw_len = len(v['frames'])
-        effective_len = len([x for i, x in enumerate(v['frames']) if i % FRAME_STEP == 0])
+        if specific_budget is not None:
+            print(f"⚖️  Applying specific budget for [{source_name}]: {specific_budget} frames")
+            random.shuffle(candidates)
+            source_collected = 0
+            for v in candidates:
+                if source_collected >= specific_budget: break
+                
+                # Calculate effective frames
+                effective_len = len([x for i, x in enumerate(v['frames']) if i % FRAME_STEP == 0])
+                
+                train_set.append(v)
+                added_video_names.add(v['name'])
+                source_collected += effective_len
+                collected_frames += effective_len
+
+    # B. Process Global Budget (Fallback for sources without specific limits)
+    if global_budget is not None:
+        print(f"⚖️  Filling remaining global budget: {global_budget} frames")
+        remaining_candidates = [v for v in train_pool if v['name'] not in added_video_names]
+        random.shuffle(remaining_candidates)
         
-        train_set.append(v)
-        collected_frames += effective_len
+        for v in remaining_candidates:
+            if collected_frames >= global_budget: break
+            
+            effective_len = len([x for i, x in enumerate(v['frames']) if i % FRAME_STEP == 0])
+            train_set.append(v)
+            collected_frames += effective_len
 
     video_to_split = {v['name']: s for s, lst in [("train", train_set), ("val", val_set), ("test", test_set)] for v in lst}
     video_source_map = {v['name']: v for v in all_videos}

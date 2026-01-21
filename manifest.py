@@ -24,7 +24,7 @@ SEED = 42
 
 # How many videos to lock for evaluation?
 LOCK_COUNTS = {
-    "bdd":        {"val": 15, "test": 15}, 
+    "bdd":        {"val": 10, "test": 10}, 
     "dancetrack": {"val": 10, "test": 10}, 
     "visdrone":   {"val": 10, "test": 10}  
 }

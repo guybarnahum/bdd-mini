@@ -17,7 +17,6 @@ except ImportError:
 
 try:
     import boto3
-    from botocore.exceptions import NoCredentialsError, ClientError
 except ImportError:
     print("❌ Missing 'boto3'. For S3 support, run: pip install boto3")
 
@@ -113,8 +112,6 @@ def download_file(url, dest_path):
         with open(dest_path, 'wb') as f:
             for chunk in tqdm(r.iter_content(chunk_size=8192)): f.write(chunk)
 
-def check_budget(current_frames, target_budget):
-    return current_frames < target_budget
 
 # --- SELECTION STRATEGIES (Manifest Aware) ---
 
@@ -367,7 +364,7 @@ def build_mini_dataset():
     data_dir = Path("data"); data_dir.mkdir(exist_ok=True)
     cache_dir = data_dir / "image_cache"; cache_dir.mkdir(exist_ok=True)
     out_dir = OUTPUT_DIR
-    print(f"⚙️  Config: Seed {SEED} | Manifest: {MANIFEST_FILE}") 
+    print(f"⚙️  Config: Seed {SEED} | Manifest: {MANIFEST_FILE}")
 
     # 1. Prepare BDD Labels if needed
     labels_zip = None

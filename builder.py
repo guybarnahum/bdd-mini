@@ -73,7 +73,6 @@ DANCETRACK_RAW_MAP = { 1: "pedestrian" }
 SEED = cfg['dataset']['seed']
 OUTPUT_DIR = Path(cfg['dataset']['output_dir'])
 FRAME_STEP = cfg['dataset'].get('frame_step', 5)
-TRAIN_BUDGET = cfg['dataset'].get('train_frame_budget', 5000)
 
 # Build Lookup Sets for Manifest
 # Format: { "video_name": "val" } or { "video_name": "test" }
@@ -368,7 +367,7 @@ def build_mini_dataset():
     data_dir = Path("data"); data_dir.mkdir(exist_ok=True)
     cache_dir = data_dir / "image_cache"; cache_dir.mkdir(exist_ok=True)
     out_dir = OUTPUT_DIR
-    print(f"⚙️  Config: Seed {SEED} | Budget: {TRAIN_BUDGET} Frames | Manifest: {MANIFEST_FILE}")
+    print(f"⚙️  Config: Seed {SEED} | Manifest: {MANIFEST_FILE}") 
 
     # 1. Prepare BDD Labels if needed
     labels_zip = None

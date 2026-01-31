@@ -5,6 +5,7 @@ import sys
 import shutil
 import zipfile
 import re
+import argparse
 from pathlib import Path
 from tqdm import tqdm
 
@@ -360,11 +361,15 @@ def save_manifest_log(splits, output_root):
 
 # --- MAIN BUILDER ---
 
-def build_mini_dataset():
+def build_mini_dataset(target_split=None, video_limit=20):
     data_dir = Path("data"); data_dir.mkdir(exist_ok=True)
     cache_dir = data_dir / "image_cache"; cache_dir.mkdir(exist_ok=True)
     out_dir = OUTPUT_DIR
     print(f"⚙️  Config: Seed {SEED} | Manifest: {MANIFEST_FILE}")
+    
+    if target_split:
+        limit_str = f"{video_limit} videos" if video_limit > 0 else "ALL videos"
+        print(f"🌟 EXCLUSIVE MODE: Generating ONLY '{target_split}' split with {limit_str}")
 
     # 1. Prepare BDD Labels if needed
     labels_zip = None
@@ -381,72 +386,104 @@ def build_mini_dataset():
 
     if not all_videos: print("\n❌ No videos selected!"); sys.exit(1)
     
-    # 3. Apply Manifest Split Logic
-    train_set, val_set, test_set = [], [], []
-    train_pool = []
-
-    # Bin videos by manifest instructions
-    for v in all_videos:
-        if v['split'] == 'val':
-            val_set.append(v)
-        elif v['split'] == 'test':
-            test_set.append(v)
-        else:
-            train_pool.append(v)
-
-    # 4. Fill Training Budget from Pool (Source-Aware)
-    random.seed(SEED)
+    # --- LOGIC BRANCHING ---
+    export_list = []
     
-    # Group training candidates by source
-    train_candidates = {}
-    for v in train_pool:
-        src = v.get('source_type', 'unknown')
-        train_candidates.setdefault(src, []).append(v)
-
-    global_budget = cfg['dataset'].get('train_frame_budget', None)
-    collected_frames = 0
-    added_video_names = set()
-    
-    # A. Process Source-Specific Budgets First
-    for source_name, candidates in train_candidates.items():
-        source_cfg = cfg.get(source_name, {})
-        specific_budget = source_cfg.get('frame_budget', None)
+    if target_split:
+        # === EXCLUSIVE SPLIT MODE ===
+        # Filter videos strictly by source type
+        special_set = [v for v in all_videos if v['source_type'] == target_split]
         
-        if specific_budget is not None:
-            print(f"⚖️  Applying specific budget for [{source_name}]: {specific_budget} frames")
-            random.shuffle(candidates)
-            source_collected = 0
-            for v in candidates:
-                if source_collected >= specific_budget: break
+        if not special_set:
+            print(f"\n❌ Error: No videos found for source '{target_split}'!")
+            sys.exit(1)
+            
+        print(f"🔎 Found {len(special_set)} potential videos for '{target_split}'.")
+        
+        # Apply Limit if greater than 0
+        if video_limit > 0 and len(special_set) > video_limit:
+            print(f"✂️  Limiting to {video_limit} random videos.")
+            random.seed(SEED)
+            random.shuffle(special_set)
+            special_set = special_set[:video_limit]
+        
+        # In exclusive mode, we create ONE split with the name of the source
+        video_to_split = {v['name']: target_split for v in special_set}
+        export_list.append((target_split, special_set))
+        
+        # For active name set, used in download loop
+        video_source_map = {v['name']: v for v in special_set}
+        
+    else:
+        # === STANDARD MODE (Train/Val/Test) ===
+        # 3. Apply Manifest Split Logic
+        train_set, val_set, test_set = [], [], []
+        train_pool = []
+
+        # Bin videos by manifest instructions
+        for v in all_videos:
+            if v['split'] == 'val':
+                val_set.append(v)
+            elif v['split'] == 'test':
+                test_set.append(v)
+            else:
+                train_pool.append(v)
+
+        # 4. Fill Training Budget from Pool (Source-Aware)
+        random.seed(SEED)
+        
+        # Group training candidates by source
+        train_candidates = {}
+        for v in train_pool:
+            src = v.get('source_type', 'unknown')
+            train_candidates.setdefault(src, []).append(v)
+
+        global_budget = cfg['dataset'].get('train_frame_budget', None)
+        collected_frames = 0
+        added_video_names = set()
+        
+        # A. Process Source-Specific Budgets First
+        for source_name, candidates in train_candidates.items():
+            source_cfg = cfg.get(source_name, {})
+            specific_budget = source_cfg.get('frame_budget', None)
+            
+            if specific_budget is not None:
+                print(f"⚖️  Applying specific budget for [{source_name}]: {specific_budget} frames")
+                random.shuffle(candidates)
+                source_collected = 0
+                for v in candidates:
+                    if source_collected >= specific_budget: break
+                    
+                    # Calculate effective frames
+                    effective_len = len([x for i, x in enumerate(v['frames']) if i % FRAME_STEP == 0])
+                    
+                    train_set.append(v)
+                    added_video_names.add(v['name'])
+                    source_collected += effective_len
+                    collected_frames += effective_len
+
+        # B. Process Global Budget (Fallback for sources without specific limits)
+        if global_budget is not None:
+            print(f"⚖️  Filling remaining global budget: {global_budget} frames")
+            remaining_candidates = [v for v in train_pool if v['name'] not in added_video_names]
+            random.shuffle(remaining_candidates)
+            
+            for v in remaining_candidates:
+                if collected_frames >= global_budget: break
                 
-                # Calculate effective frames
                 effective_len = len([x for i, x in enumerate(v['frames']) if i % FRAME_STEP == 0])
-                
                 train_set.append(v)
-                added_video_names.add(v['name'])
-                source_collected += effective_len
                 collected_frames += effective_len
 
-    # B. Process Global Budget (Fallback for sources without specific limits)
-    if global_budget is not None:
-        print(f"⚖️  Filling remaining global budget: {global_budget} frames")
-        remaining_candidates = [v for v in train_pool if v['name'] not in added_video_names]
-        random.shuffle(remaining_candidates)
+        video_to_split = {v['name']: s for s, lst in [("train", train_set), ("val", val_set), ("test", test_set)] for v in lst}
+        video_source_map = {v['name']: v for v in all_videos}
         
-        for v in remaining_candidates:
-            if collected_frames >= global_budget: break
-            
-            effective_len = len([x for i, x in enumerate(v['frames']) if i % FRAME_STEP == 0])
-            train_set.append(v)
-            collected_frames += effective_len
-
-    video_to_split = {v['name']: s for s, lst in [("train", train_set), ("val", val_set), ("test", test_set)] for v in lst}
-    video_source_map = {v['name']: v for v in all_videos}
-    
-    print(f"📊 Final Distribution:")
-    print(f"   Train: {len(train_set)} videos ({collected_frames} frames) [Budgeted]")
-    print(f"   Val:   {len(val_set)} videos [Fixed]")
-    print(f"   Test:  {len(test_set)} videos [Fixed, Full FPS]")
+        export_list = [("train", train_set), ("val", val_set), ("test", test_set)]
+        
+        print(f"📊 Final Distribution:")
+        print(f"   Train: {len(train_set)} videos ({collected_frames} frames) [Budgeted]")
+        print(f"   Val:   {len(val_set)} videos [Fixed]")
+        print(f"   Test:  {len(test_set)} videos [Fixed, Full FPS]")
 
     # 5. Stream Images
     print(f"☁️  Streaming Frames to Universal MOT Structure...")
@@ -470,9 +507,13 @@ def build_mini_dataset():
     dl_count, cache_count = 0, 0
     
     # Pre-calculate active video set to skip unnecessary downloads
-    active_video_names = set(v['name'] for v in train_set + val_set + test_set)
+    active_video_names = set(video_to_split.keys())
 
     for source in download_queue:
+        # Optimization: If in exclusive mode, skip downloading sources that don't match target
+        if target_split and source['type'] != target_split:
+            continue
+            
         try:
             if source['type'] == 'visdrone' and not Path(source['path']).exists(): continue
             with source['opener'](source['path']) as z:
@@ -535,7 +576,7 @@ def build_mini_dataset():
     print(f"✅ Images: {dl_count} Downloaded, {cache_count} Cached.")
     
     print("📝 Generating Universal Metadata...")
-    for split, data in [("train", train_set), ("val", val_set), ("test", test_set)]:
+    for split, data in export_list:
         save_coco_format(split, data, out_dir)
         for vid in data: save_mot_gt_file(split, vid, out_dir)
         save_seqmap(split, data, out_dir)
@@ -544,9 +585,18 @@ def build_mini_dataset():
     shutil.copy2(CONFIG_FILE, out_dir / CONFIG_FILE)
     shutil.copy2(MANIFEST_FILE, out_dir / MANIFEST_FILE)
     
-    save_manifest_log({"train": train_set, "val": val_set, "test": test_set}, out_dir)
+    # Save log based on what we actually exported
+    log_data = {split: data for split, data in export_list}
+    save_manifest_log(log_data, out_dir)
     print(f"🚀 Done! Universal Mini-BDD ready at: {out_dir}")
 
 if __name__ == "__main__":
-    try: build_mini_dataset()
+    parser = argparse.ArgumentParser(description="Build Mini-BDD Dataset")
+    parser.add_argument("--split", type=str, choices=["visdrone", "dancetrack", "bdd"], default=None,
+                        help="Exclusive Mode: Generate ONLY this split.")
+    parser.add_argument("--limit", type=int, default=20,
+                        help="Number of videos to include in the exclusive split (Default: 20). Set 0 for ALL.")
+    args = parser.parse_args()
+    
+    try: build_mini_dataset(target_split=args.split, video_limit=args.limit)
     except KeyboardInterrupt: print("\n🛑 Interrupted."); sys.exit(0)

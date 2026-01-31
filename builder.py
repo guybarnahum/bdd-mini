@@ -371,18 +371,31 @@ def build_mini_dataset(target_split=None, video_limit=20):
         limit_str = f"{video_limit} videos" if video_limit > 0 else "ALL videos"
         print(f"🌟 EXCLUSIVE MODE: Generating ONLY '{target_split}' split with {limit_str}")
 
-    # 1. Prepare BDD Labels if needed
+    # 🛑 SMART SELECTION: Only load what is strictly necessary based on the argument
+    
+    all_videos = []
+    
+    # Define flags for what needs to be loaded based on split
+    need_bdd = (target_split == 'bdd') or (target_split is None and cfg.get('bdd', {}).get('enabled', True))
+    need_dancetrack = (target_split == 'dancetrack') or (target_split is None and cfg.get('dancetrack', {}).get('enabled', True))
+    need_visdrone = (target_split == 'visdrone') or (target_split is None and cfg.get('visdrone', {}).get('enabled', True))
+
+    # 1. Prepare BDD Labels (Only if BDD is required)
     labels_zip = None
-    if cfg.get('bdd', {}).get('enabled', True):
+    if need_bdd:
         labels_url = cfg['bdd']['labels_url']
         labels_zip = data_dir / (labels_url.split("/")[-1] if labels_url.startswith("s3://") else os.path.basename(labels_url))
         download_file(labels_url, labels_zip)
 
-    # 2. Select All Candidates
-    all_videos = []
-    all_videos.extend(select_bdd_videos(cfg.get('bdd', {}), labels_zip))
-    all_videos.extend(select_dancetrack_videos(cfg.get('dancetrack', {})))
-    all_videos.extend(select_visdrone_videos(cfg.get('visdrone', {})))
+    # 2. Select Candidates (Optimized)
+    if need_bdd:
+        all_videos.extend(select_bdd_videos(cfg.get('bdd', {}), labels_zip))
+    
+    if need_dancetrack:
+        all_videos.extend(select_dancetrack_videos(cfg.get('dancetrack', {})))
+        
+    if need_visdrone:
+        all_videos.extend(select_visdrone_videos(cfg.get('visdrone', {})))
 
     if not all_videos: print("\n❌ No videos selected!"); sys.exit(1)
     
@@ -480,25 +493,25 @@ def build_mini_dataset(target_split=None, video_limit=20):
         
         export_list = [("train", train_set), ("val", val_set), ("test", test_set)]
         
-        print(f"📊 Final Distribution:")
-        print(f"   Train: {len(train_set)} videos ({collected_frames} frames) [Budgeted]")
-        print(f"   Val:   {len(val_set)} videos [Fixed]")
-        print(f"   Test:  {len(test_set)} videos [Fixed, Full FPS]")
+        print(f"📊 Final Distribution: Train: {len(train_set)}, Val: {len(val_set)}, Test: {len(test_set)}")
 
     # 5. Stream Images
     print(f"☁️  Streaming Frames to Universal MOT Structure...")
     download_queue = []
     
-    if cfg.get('bdd', {}).get('enabled', False):
+    # Optimization: Only add enabled/relevant sources to download queue
+    # Note: 'need_bdd' etc variables already calculated above can be reused
+    
+    if need_bdd:
         urls = cfg['bdd']['images_url'] if isinstance(cfg['bdd']['images_url'], list) else [cfg['bdd']['images_url']]
         for p in urls:
             url = get_s3_presigned_url(p) if p.startswith("s3://") else p
             if url: download_queue.append({"type": "bdd", "opener": RemoteZip if "http" in url else zipfile.ZipFile, "path": url})
             
-    if cfg.get('visdrone', {}).get('enabled', False):
+    if need_visdrone:
         download_queue.append({"type": "visdrone", "opener": zipfile.ZipFile, "path": cfg['visdrone']['images_zip']})
 
-    if cfg.get('dancetrack', {}).get('enabled', False):
+    if need_dancetrack:
         urls = cfg['dancetrack']['images_url'] if isinstance(cfg['dancetrack']['images_url'], list) else [cfg['dancetrack']['images_url']]
         for p in urls:
             url = get_s3_presigned_url(p) if p.startswith("s3://") else p
@@ -510,7 +523,7 @@ def build_mini_dataset(target_split=None, video_limit=20):
     active_video_names = set(video_to_split.keys())
 
     for source in download_queue:
-        # Optimization: If in exclusive mode, skip downloading sources that don't match target
+        # Extra Safety: Skip non-target sources if in exclusive mode
         if target_split and source['type'] != target_split:
             continue
             

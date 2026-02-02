@@ -23,10 +23,11 @@ ENV_FILE = ".env"
 SEED = 42
 
 # How many videos to lock for evaluation?
+# 
 LOCK_COUNTS = {
     "bdd":        {"val": 10, "test": 10}, 
     "dancetrack": {"val": 10, "test": 10}, 
-    "visdrone":   {"val": 10, "test": 10}  
+    "visdrone":   {"val": 15, "test": 15}  # Slightly increased for aerial tasks
 }
 
 # --- HELPERS ---
@@ -153,7 +154,8 @@ def list_visdrone_videos(cfg):
     try:
         with zipfile.ZipFile(zip_path, 'r') as z:
             files = z.namelist()
-            for f in files:
+            # Enhanced: Added tqdm for better visibility on large local zips
+            for f in tqdm(files, desc="VisDrone Files"):
                 if f.endswith(".jpg") and "sequences/" in f:
                     parts = f.split('/')
                     for p in parts:
@@ -211,7 +213,8 @@ def main():
         sys.exit(1)
 
     # 4. Select Splits
-    manifest = {"val": [], "test": []}
+    # Enhanced: Added test_visdrone to allow explicit isolation if needed by builder
+    manifest = {"val": [], "test": [], "test_visdrone": []}
     random.seed(SEED)
 
     print("\n🔐 Locking splits...")
@@ -233,8 +236,16 @@ def main():
         val_vids = vid_list[:n_val]
         test_vids = vid_list[n_val:n_val+n_test]
         
-        for v in val_vids: manifest["val"].append({"source": source, "name": v})
-        for v in test_vids: manifest["test"].append({"source": source, "name": v})
+        for v in val_vids: 
+            manifest["val"].append({"source": source, "name": v})
+        
+        # Enhanced Logic: Explicitly map VisDrone test videos to the dedicated split
+        if source == "visdrone":
+            for v in test_vids: 
+                manifest["test_visdrone"].append({"source": source, "name": v})
+        else:
+            for v in test_vids: 
+                manifest["test"].append({"source": source, "name": v})
             
         print(f"   - {source}: Locked {len(val_vids)} Val, {len(test_vids)} Test")
 
@@ -243,8 +254,9 @@ def main():
         json.dump(manifest, f, indent=2)
         
     print(f"\n✅ Manifest generated successfully at {MANIFEST_FILE}")
-    print(f"   Total Val:  {len(manifest['val'])}")
-    print(f"   Total Test: {len(manifest['test'])} (Test set will use Full FPS)")
+    print(f"   Total Val:           {len(manifest['val'])}")
+    print(f"   Total Test:          {len(manifest['test'])}")
+    print(f"   Total Test VisDrone: {len(manifest['test_visdrone'])}")
 
 if __name__ == "__main__":
     main()

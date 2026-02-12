@@ -1,0 +1,55 @@
+# ========================================================================
+# STAGE 2: Long-Context ReID Refinement (config_stage3_drone.toml)
+# Logic: VisDrone(60%) + BDD (20%) + DanceTrack (20%)
+# Goal: Adapt the model's "Eyes" (DETR) to handle the top-down perspective 
+# and tiny objects of VisDrone without losing the multi-class categorization 
+# learned in Stage 1.
+# ========================================================================
+
+[dataset]
+# Global Settings
+seed = 12
+output_dir = "output/stage2_drone_dataset"
+
+# Reduced from 5 to 2 to provide smoother motion gradients.
+# This ensures objects don't move too far between frames, 
+# which is essential for drone motion consistency
+frame_step = 2
+
+# --- SOURCE: BDD100K (Remote Stream) ---
+# Contribution: Primary source for "Vehicle" category (Car, Truck, Bus)
+[bdd]
+enabled = true
+frame_budget = 3000  # 20% weight: Maintain Vehicle knowledge
+
+images_url = [
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-1.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-2.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-3.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-4.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-5.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-6.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-7.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-val-1.zip"
+]
+labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
+
+# --- SOURCE: DanceTrack (Remote Stream) ---
+# Contribution: High-quality complex motion for "Person" category
+[dancetrack]
+enabled = true
+frame_budget = 3000  # 20% weight: Maintain Person knowledge
+
+images_url = [
+    "s3://motip-datasets/dancetrack-dataset/train1.zip",
+    "s3://motip-datasets/dancetrack-dataset/train2.zip",
+    "s3://motip-datasets/dancetrack-dataset/val.zip"
+]
+
+# --- SOURCE: VisDrone ---
+# Strategy: Aerial views are introduced in Stage 2 to prevent early gradient confusion.
+[visdrone]
+enabled = true
+frame_budget = 9000 # 60% weight: Learn aerial features aggressively
+images_zip = "data/VisDrone2019-MOT-train.zip"
+labels_zip = "data/VisDrone2019-MOT-train.zip"

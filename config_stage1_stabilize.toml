@@ -1,0 +1,53 @@
+# ========================================================================
+# STAGE 1: Multi-Class Logic Stabilization (config_stage1_stabilize.toml)
+# Logic: BDD (50%) + DanceTrack (50%)
+# Goal: Establish "Vehicle" category and partition the ID Dictionary
+# ========================================================================
+
+[dataset]
+# Global Settings
+seed = 12
+output_dir = "output/stage1_stabilize_dataset"
+
+# Reduced from 5 to 2 to provide smoother motion gradients.
+# This ensures objects don't move too far between frames, making the 
+# initial "Person vs Vehicle" ID association easier to learn.
+frame_step = 2  
+
+# --- SOURCE: BDD100K (Remote Stream) ---
+# Contribution: Primary source for "Vehicle" category (Car, Truck, Bus)
+[bdd]
+enabled = true
+frame_budget = 5000  # FORCE 50% ratio
+
+images_url = [
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-1.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-2.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-3.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-4.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-5.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-6.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-train-7.zip",
+    "s3://motip-datasets/bdd-mini-data/images20-track-val-1.zip"
+]
+labels_url = "s3://motip-datasets/bdd-mini-data/box_track_labels_trainval.zip"
+
+# --- SOURCE: DanceTrack (Remote Stream) ---
+# Contribution: High-quality complex motion for "Person" category
+[dancetrack]
+enabled = true
+frame_budget = 5000  # FORCE 50% ratio
+
+images_url = [
+    "s3://motip-datasets/dancetrack-dataset/train1.zip",
+    "s3://motip-datasets/dancetrack-dataset/train2.zip",
+    "s3://motip-datasets/dancetrack-dataset/val.zip"
+]
+
+# --- SOURCE: VisDrone (DISABLED for Stage 1) ---
+# Strategy: Aerial views are introduced in Stage 2 to prevent early gradient confusion.
+[visdrone]
+enabled = false
+frame_budget = 0 
+images_zip = "data/VisDrone2019-MOT-train.zip"
+labels_zip = "data/VisDrone2019-MOT-train.zip"

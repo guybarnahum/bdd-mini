@@ -354,11 +354,9 @@ def build_mini_dataset(target_split=None, video_limit=20):
             random.seed(SEED)
             random.shuffle(special_set)
             special_set = special_set[:video_limit]
-        
         # In exclusive mode, we create ONE split with the name of the source
         video_to_split = {v['name']: target_split for v in special_set}
         export_list.append((target_split, special_set))
-        
         # For active name set, used in download loop
         video_source_map = {v['name']: v for v in special_set}
     else:
@@ -366,7 +364,6 @@ def build_mini_dataset(target_split=None, video_limit=20):
         # 3. Apply Manifest Split Logic
         train_set, val_set, test_set = [], [], []
         train_pool = []
-
         # Bin videos by manifest instructions
         for v in all_videos:
             if v['split'] == 'val': val_set.append(v)
@@ -442,9 +439,6 @@ def build_mini_dataset(target_split=None, video_limit=20):
     active_video_names = set(video_to_split.keys())
 
     for source in download_queue:
-        # Extra Safety: Skip non-target sources if in exclusive mode
-        if target_split and source['type'] != target_split:
-            continue
         if target_split and source['type'] != target_split: continue
         try:
             if source['type'] == 'visdrone' and not Path(source['path']).exists(): continue
@@ -500,7 +494,6 @@ def build_mini_dataset(target_split=None, video_limit=20):
     print(f"📄 Archiving {CONFIG_FILE} and Manifest...")
     shutil.copy2(CONFIG_FILE, out_dir / "config.toml") # Archive as standard name
     shutil.copy2(MANIFEST_FILE, out_dir / MANIFEST_FILE)
-    
     # Save log based on what we actually exported
     log_data = {split: data for split, data in export_list}
     save_manifest_log(log_data, out_dir)
